@@ -56,6 +56,7 @@ import com.xdo.app.dl.AppUtil
 @Composable
 fun ResolveScreen(
     viewModel: ResolveViewModel,
+    recordId: Long,
     onBack: () -> Unit,
     onDone: () -> Unit,
 ) {
@@ -70,8 +71,8 @@ fun ResolveScreen(
 
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    LaunchedEffect(record?.id) {
-        record?.id?.let { viewModel.load(it) }
+    LaunchedEffect(Unit) {
+        viewModel.load(recordId)
     }
     LaunchedEffect(message) {
         message?.let {

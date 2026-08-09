@@ -75,6 +75,7 @@ fun AppRoot(onOpenSettings: () -> Unit = {}) {
             val vm: ResolveViewModel = viewModel(key = "resolve_$id")
             ResolveScreen(
                 viewModel = vm,
+                recordId = id,
                 onBack = { navController.popBackStack() },
                 onDone = {
                     navController.popBackStack(Routes.HOME, inclusive = false)
