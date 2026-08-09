@@ -1,6 +1,6 @@
 {
-  "versionCode": 1,
-  "versionName": "0.1.0",
-  "updateMessage": "X 下载助手 v0.1.0 首发：分享下载 X 视频，历史回看，内置播放器",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_0.1.0.apk"
+  "versionCode": 2,
+  "versionName": "0.1.1",
+  "updateMessage": "修复：清晰度选项全部显示「视频」、无法区分的问题（兼容 2026 新视频 URL 格式，恢复分辨率/码率标签）",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.1.apk"
 }

@@ -94,33 +94,49 @@ object XResolver {
             val url = v.optString("src", v.optString("url"))
             if (url.isBlank() || !seen.add(url)) continue
             val bitrate = v.optInt("bitrate", 0)
+            val dims = parseDims(url)
             list.add(
                 QualityOption(
                     label = qualityLabel(url, bitrate),
-                    width = 0,
-                    height = 0,
+                    width = dims?.first ?: 0,
+                    height = dims?.second ?: 0,
                     bitrateKbps = bitrate / 1000,
                     url = url,
                 )
             )
         }
-        // 按 bitrate 降序（index 0 为最高清，供"智能"默认选中）
-        list.sortByDescending { it.bitrateKbps }
+        // 按分辨率（宽高积）降序，码率作次级排序；
+        // 新接口不返回 bitrate，旧排序会全部为 0 导致顺序随机，故改为按分辨率排。
+        list.sortWith(
+            compareByDescending<QualityOption> { it.width * it.height }
+                .thenByDescending { it.bitrateKbps }
+        )
         return list
     }
 
-    /** 从 URL 提取分辨率，如 vid/1080x1920/ → "1080p"；无分辨率时退回码率 */
+    /**
+     * 从 URL 提取宽高，兼容两种路径格式：
+     *   旧：.../vid/480x270/xxx.mp4
+     *   新：.../vid/avc1/320x568/xxx.mp4   （2026 起多了一层编码器目录）
+     */
+    private fun parseDims(url: String): Pair<Int, Int>? {
+        val dims = Regex("""/(\d{3,4})x(\d{3,4})/""").find(url) ?: return null
+        return dims.groupValues[1].toInt() to dims.groupValues[2].toInt()
+    }
+
+    /** 从 URL 提取分辨率，如 vid/avc1/1080x1920/ → "1080p"；无分辨率时退回码率 */
     fun qualityLabel(url: String, bitrate: Int): String {
-        val dims = Regex("""/vid/[^/]*?(\d{3,4})x(\d{3,4})/""").find(url)
+        val dims = parseDims(url)
         if (dims != null) {
-            val w = dims.groupValues[1].toInt()
-            val h = dims.groupValues[2].toInt()
-            val p = when (maxOf(w, h)) {
+            val w = dims.first
+            val h = dims.second
+            // 短边定档：横屏 1280x720 → 720p；竖屏 720x1280 → 720p
+            val p = when (minOf(w, h)) {
                 in 1440..Int.MAX_VALUE -> "1440p"
                 in 1080..1439 -> "1080p"
                 in 720..1079 -> "720p"
                 in 480..719 -> "480p"
-                in 360..479 -> "360p"
+                in 320..479 -> "360p"
                 else -> "240p"
             }
             return "$p · ${w}x${h}"
