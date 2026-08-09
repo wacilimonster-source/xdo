@@ -1,0 +1,14 @@
+# X 下载助手 xdo · 版本控制忽略规则
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+app/build/
+*.apk
+!releases/*.apk
+*.aab

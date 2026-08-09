@@ -1,0 +1,6 @@
+{
+  "versionCode": 1,
+  "versionName": "0.1.0",
+  "updateMessage": "X 下载助手 v0.1.0 首发：分享下载 X 视频，历史回看，内置播放器",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_0.1.0.apk"
+}

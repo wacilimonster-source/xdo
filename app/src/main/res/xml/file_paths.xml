@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- 下载中的临时文件（/data/data/pkg/cache/xdo/） -->
+    <cache-path
+        name="xdo_cache"
+        path="xdo/" />
+    <!-- 低版本系统的兜底保存目录 -->
+    <files-path
+        name="xdo_files"
+        path="downloads/" />
+</paths>
