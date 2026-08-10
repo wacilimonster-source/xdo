@@ -180,6 +180,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                 put("label", q.label)
                 put("url", q.url)
                 put("bitrate", q.bitrateKbps)
+                put("isHls", q.isHls)
             })
         }
         return arr.toString()
@@ -199,6 +200,7 @@ fun decodeVariants(json: String): List<com.xdo.app.data.QualityOption> {
                     height = 0,
                     bitrateKbps = o.optInt("bitrate", 0),
                     url = o.getString("url"),
+                    isHls = o.optBoolean("isHls", false),
                 )
             )
         }

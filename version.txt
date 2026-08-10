@@ -1,6 +1,6 @@
 {
-  "versionCode": 2,
-  "versionName": "0.1.1",
-  "updateMessage": "修复：清晰度选项全部显示「视频」、无法区分的问题（兼容 2026 新视频 URL 格式，恢复分辨率/码率标签）",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.1.apk"
+  "versionCode": 3,
+  "versionName": "0.1.2",
+  "updateMessage": "修复长视频下载不完整：新增 HLS(m3u8) 分片流下载与音视频合成，长视频（如 7 分钟）也能完整下载带声 MP4；并修复下载中途断流静默存成坏文件的问题。",
+  "apkDownloadUrl": "https://github.com/your/repo/releases/download/v0.1.2/xdo_v0.1.2.apk"
 }

@@ -84,26 +84,32 @@ object XResolver {
     }
 
     private fun parseVariants(variants: JSONArray): List<QualityOption> {
-        val list = ArrayList<QualityOption>(variants.length())
+        val list = ArrayList<QualityOption>(variants.length() * 2)
         val seen = HashSet<String>()
         for (i in 0 until variants.length()) {
             val v = variants.optJSONObject(i) ?: continue
             // 兼容新旧两种字段命名：新接口 type/src，旧接口 content_type/url
             val type = v.optString("type", v.optString("content_type"))
-            if (type != "video/mp4") continue
             val url = v.optString("src", v.optString("url"))
             if (url.isBlank() || !seen.add(url)) continue
-            val bitrate = v.optInt("bitrate", 0)
-            val dims = parseDims(url)
-            list.add(
-                QualityOption(
-                    label = qualityLabel(url, bitrate),
-                    width = dims?.first ?: 0,
-                    height = dims?.second ?: 0,
-                    bitrateKbps = bitrate / 1000,
-                    url = url,
-                )
-            )
+            when (type) {
+                "video/mp4" -> {
+                    val bitrate = v.optInt("bitrate", 0)
+                    val dims = parseDims(url)
+                    list.add(
+                        QualityOption(
+                            label = qualityLabel(url, bitrate),
+                            width = dims?.first ?: 0,
+                            height = dims?.second ?: 0,
+                            bitrateKbps = bitrate / 1000,
+                            url = url,
+                        )
+                    )
+                }
+                // HLS 流：长视频（如 7 分钟）X 只提供 m3u8 分片流，需分片下载后合成。
+                // 直接下载 m3u8 当单文件会得到「只播前面一段」的损坏文件。
+                "application/x-mpegURL" -> list.addAll(parseHlsVariants(url))
+            }
         }
         // 按分辨率（宽高积）降序，码率作次级排序；
         // 新接口不返回 bitrate，旧排序会全部为 0 导致顺序随机，故改为按分辨率排。
@@ -113,6 +119,100 @@ object XResolver {
         )
         return list
     }
+
+    /**
+     * 解析 HLS 主播放列表，为其中每个清晰度生成一项（带 isHls=true）。
+     * 解析失败则兜底返回单个「HLS 流」选项，保证仍可下载。
+     */
+    private fun parseHlsVariants(masterUrl: String): List<QualityOption> {
+        return runCatching {
+            val req = Request.Builder().url(masterUrl)
+                .header("User-Agent", UA).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                resp.body?.string()
+            }
+        }.getOrNull()
+            ?.let { parseMasterPlaylist(it, masterUrl) }
+            ?: listOf(
+                QualityOption(
+                    label = "HLS 流",
+                    width = 0, height = 0, bitrateKbps = 0,
+                    url = masterUrl, isHls = true,
+                )
+            )
+    }
+
+    /** 解析 HLS 主播放列表（含 #EXT-X-STREAM-INF），返回各清晰度选项；若已是媒体播放列表则回退单选项 */
+    private fun parseMasterPlaylist(body: String, masterUrl: String): List<QualityOption> {
+        val lines = body.split("\n").map { it.trim() }
+        if (!lines.any { it.startsWith("#EXT-X-STREAM-INF") }) {
+            // 已是媒体播放列表：取一个通用 HLS 选项
+            val dims = Regex("""(\d{3,4})x(\d{3,4})""").find(masterUrl)?.groupValues
+            val (w, h) = if (dims != null) dims[1].toInt() to dims[2].toInt() else 0 to 0
+            return listOf(
+                QualityOption(
+                    label = if (w > 0) "${tierLabel(w, h)} · ${w}x${h} · HLS" else "HLS 流",
+                    width = w, height = h, bitrateKbps = 0,
+                    url = masterUrl, isHls = true,
+                )
+            )
+        }
+        val out = ArrayList<QualityOption>()
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i]
+            if (line.startsWith("#EXT-X-STREAM-INF")) {
+                val res = Regex("""RESOLUTION=(\d{3,4})x(\d{3,4})""").find(line)
+                val bw = Regex("""BANDWIDTH=(\d+)""").find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                // URI 可能在下一行（绝对或相对）
+                var uri: String? = null
+                var j = i + 1
+                while (j < lines.size && uri == null) {
+                    val n = lines[j]
+                    if (n.startsWith("#")) { i = j; break }
+                    uri = n; i = j
+                    j++
+                }
+                if (uri != null && res != null) {
+                    val w = res.groupValues[1].toInt()
+                    val h = res.groupValues[2].toInt()
+                    out.add(
+                        QualityOption(
+                            label = "${tierLabel(w, h)} · ${w}x${h} · HLS",
+                            width = w, height = h, bitrateKbps = bw / 1000,
+                            url = resolveUri(masterUrl, uri), isHls = true,
+                        )
+                    )
+                }
+            }
+            i++
+        }
+        return out.ifEmpty {
+            listOf(QualityOption("HLS 流", 0, 0, 0, masterUrl, isHls = true))
+        }
+    }
+
+    private fun tierLabel(w: Int, h: Int): String = when (minOf(w, h)) {
+        in 1440..Int.MAX_VALUE -> "1440p"
+        in 1080..1439 -> "1080p"
+        in 720..1079 -> "720p"
+        in 480..719 -> "480p"
+        in 320..479 -> "360p"
+        else -> "240p"
+    }
+
+    /** 将播放列表中的相对/根相对 URI 解析为绝对 URL */
+    private fun resolveUri(base: String, uri: String): String {
+        if (uri.startsWith("http://") || uri.startsWith("https://")) return uri
+        if (uri.startsWith("/")) {
+            val m = Regex("""(https?://[^/]+)""").find(base)
+            return (m?.groupValues?.get(1) ?: "") + uri
+        }
+        val slash = base.lastIndexOf('/')
+        return if (slash >= 0) base.substring(0, slash + 1) + uri else uri
+    }
+
 
     /**
      * 从 URL 提取宽高，兼容两种路径格式：

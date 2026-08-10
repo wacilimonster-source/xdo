@@ -18,6 +18,8 @@ data class QualityOption(
     val height: Int,
     val bitrateKbps: Int,
     val url: String,
+    /** true 表示 url 为 HLS(m3u8) 播放列表，需分片下载后合成 */
+    val isHls: Boolean = false,
 )
 
 @Entity(tableName = "records")

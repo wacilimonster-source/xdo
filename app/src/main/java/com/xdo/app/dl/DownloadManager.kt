@@ -131,38 +131,71 @@ class DownloadManager(
         DownloadService.updateProgress(context, title, 0)
 
         val part = partFile(rec.id)
+        val isHls = url.endsWith(".m3u8", ignoreCase = true)
 
         try {
-            withContext(Dispatchers.IO) {
-                val downloaded = part.length()
-                downloadToPart(part, url, downloaded, rec, title)
+            if (isHls) {
+                // HLS 分片流：分片下载后合成单个带声 MP4
+                val hlsTmp = File(context.cacheDir, "xdo/hls_${rec.id}")
+                hlsTmp.mkdirs()
+                val hlsFile = withContext(Dispatchers.IO) {
+                    HlsDownloader.download(client, hlsTmp, url) { pct ->
+                        DownloadService.updateProgress(context, title, pct)
+                    }
+                }
+                if (!hlsFile.exists() || hlsFile.length() == 0L) {
+                    throw java.io.IOException("HLS 合成结果为空")
+                }
+                val finished = dao.getById(rec.id) ?: return
+                if (finished.status != RecordStatus.DOWNLOADING) return
+                val savedUri = MediaSaver.save(context, hlsFile, finished.fileName())
+                hlsFile.delete()
+                hlsTmp.deleteRecursively()
+                if (savedUri == null) {
+                    setFailed(finished, "保存到相册失败")
+                    return
+                }
+                dao.upsert(finished.copy(
+                    status = RecordStatus.DONE,
+                    progress = 100,
+                    fileUri = savedUri,
+                    errorMsg = null,
+                    completedAt = System.currentTimeMillis(),
+                ))
+                DownloadService.finishDone(context, title)
+            } else {
+                withContext(Dispatchers.IO) {
+                    val downloaded = part.length()
+                    downloadToPart(part, url, downloaded, rec, title)
+                }
+                // 转存媒体库
+                val finished = dao.getById(rec.id) ?: return
+                if (finished.status != RecordStatus.DOWNLOADING) return
+                val savedUri = MediaSaver.save(context, part, finished.fileName())
+                part.delete()
+                if (savedUri == null) {
+                    setFailed(finished, "保存到相册失败")
+                    return
+                }
+                dao.upsert(finished.copy(
+                    status = RecordStatus.DONE,
+                    progress = 100,
+                    fileUri = savedUri,
+                    errorMsg = null,
+                    completedAt = System.currentTimeMillis(),
+                ))
+                DownloadService.finishDone(context, title)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            // 清理可能残留的 HLS 临时目录
+            runCatching { File(context.cacheDir, "xdo/hls_${rec.id}").deleteRecursively() }
             val cur = dao.getById(rec.id) ?: return
             if (cur.status == RecordStatus.PAUSED) return
             setFailed(cur, friendlyError(e))
             return
         }
-
-        // 转存媒体库
-        val finished = dao.getById(rec.id) ?: return
-        if (finished.status != RecordStatus.DOWNLOADING) return
-        val savedUri = MediaSaver.save(context, part, finished.fileName())
-        part.delete()
-        if (savedUri == null) {
-            setFailed(finished, "保存到相册失败")
-            return
-        }
-        dao.upsert(finished.copy(
-            status = RecordStatus.DONE,
-            progress = 100,
-            fileUri = savedUri,
-            errorMsg = null,
-            completedAt = System.currentTimeMillis(),
-        ))
-        DownloadService.finishDone(context, title)
     }
 
     private suspend fun downloadToPart(
@@ -215,10 +248,10 @@ class DownloadManager(
         val body = resp.body ?: run { resp.close(); throw IllegalStateException("无响应体") }
 
         part.parentFile?.mkdirs()
+        var written = start
         RandomAccessFile(part, "rw").use { raf ->
             raf.seek(start)
             val buf = ByteArray(CHUNK)
-            var written = start
             var lastNotify = 0L
             body.byteStream().use { input ->
                 while (true) {
@@ -239,6 +272,11 @@ class DownloadManager(
                     }
                 }
             }
+        }
+        // 完整性校验：连接中途断开时 read 会提前返回 -1，必须核对字节数，
+        // 否则会把截断的坏文件当成「已完成」保存（表现为只播前面一段）。
+        if (total > 0 && written < total) {
+            throw java.io.IOException("下载不完整：已得 ${written} / ${total} 字节，请重试")
         }
         resp.close()
     }
