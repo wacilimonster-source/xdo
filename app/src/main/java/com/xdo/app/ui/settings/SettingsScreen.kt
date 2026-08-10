@@ -59,19 +59,15 @@ private val QUALITY_LABELS = listOf(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenLoginX: () -> Unit = {}) {
+fun SettingsScreen(onBack: () -> Unit) {
     val vm: SettingsViewModel = viewModel()
     val defaultQualityIndex by vm.defaultQualityIndex.collectAsState()
     val wifiOnly by vm.wifiOnly.collectAsState()
     val updateState by vm.updateState.collectAsState()
     val snack by vm.snack.collectAsState()
-    val xCookie by vm.xCookie.collectAsState()
 
     var showQualityPicker by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
-    var showPaste by remember { mutableStateOf(false) }
-    var pasteText by remember { mutableStateOf("") }
-    var confirmClearCookie by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(snack) {
@@ -128,32 +124,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenLoginX: () -> Unit = {}) {
                 subtitle = "清空列表（不删除已下载文件）",
                 onClick = { confirmClear = true },
             )
-            HorizontalDivider()
-
-            // X 账号登录：登录后可解析受限（需登录）的推文
-            SectionTitle("X 账号（登录后可解析受限推文）")
-            SettingRow(
-                title = if (xCookie.isNotBlank()) "已登录 ✓" else "未登录",
-                subtitle = if (xCookie.isNotBlank())
-                    "Cookie 已保存，可解析需登录的推文"
-                else
-                    "受限推文会提示需要登录 X 账号",
-                onClick = {},
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (xCookie.isBlank()) {
-                    Button(onClick = onOpenLoginX) { Text("App 内登录 X") }
-                    OutlinedButton(onClick = { showPaste = true }) { Text("粘贴 Cookie") }
-                } else {
-                    OutlinedButton(onClick = { showPaste = true }) { Text("更新 Cookie") }
-                    OutlinedButton(onClick = { confirmClearCookie = true }) { Text("清除登录") }
-                }
-            }
             HorizontalDivider()
 
             SectionTitle("版本")
@@ -256,65 +226,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenLoginX: () -> Unit = {}) {
         )
     }
 
-    // 粘贴 Cookie 弹窗
-    if (showPaste) {
-        AlertDialog(
-            onDismissRequest = { showPaste = false },
-            title = { Text(if (xCookie.isBlank()) "粘贴 X Cookie" else "更新 X Cookie") },
-            text = {
-                Column(Modifier.fillMaxWidth()) {
-                    Text(
-                        "在电脑浏览器登录 X 后，打开开发者工具（F12）→ Network → 任意 X 请求 → 复制 Request Headers 里的 Cookie 整行内容，粘贴到这里。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.outline,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = pasteText,
-                        onValueChange = { pasteText = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("auth_token=...; ct0=...; ...") },
-                        minLines = 3,
-                        maxLines = 6,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val v = pasteText.trim()
-                    if (v.isBlank()) {
-                        vm.consumeSnack()
-                        return@TextButton
-                    }
-                    vm.setXCookie(v)
-                    pasteText = ""
-                    showPaste = false
-                }) {
-                    Text("保存")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showPaste = false }) { Text("取消") }
-            },
-        )
-    }
-
-    if (confirmClearCookie) {
-        AlertDialog(
-            onDismissRequest = { confirmClearCookie = false },
-            title = { Text("清除 X 登录凭据？") },
-            text = { Text("清除后受限推文将再次提示需要登录。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmClearCookie = false
-                    vm.clearXCookie()
-                }) { Text("清除") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClearCookie = false }) { Text("取消") }
-            },
-        )
-    }
+    // 粘贴 Cookie 弹窗已移除：v0.1.8 起全程免登录，X 登录凭据已不再需要
 
     // 更新弹窗
     updateInfo?.let { info ->

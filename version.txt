@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "0.1.7",
-  "updateMessage": "新增 fxtwitter 匿名备用解析通道：官方接口被拦截（tombstone）的推文自动切换备用通道获取视频，无需登录即可下载更多视频。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.7.apk"
+  "versionCode": 9,
+  "versionName": "0.1.8",
+  "updateMessage": "简化功能：移除不再需要的 X 账号登录（全程免登录）；修复搜索框文字显示不全；支持手动粘贴 X 链接解析下载；列表卡片显示视频封面缩略图与时长。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.8.apk"
 }

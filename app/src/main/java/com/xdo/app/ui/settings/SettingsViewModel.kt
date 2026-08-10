@@ -8,7 +8,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xdo.app.BuildConfig
 import com.xdo.app.dl.AppPrefsHolder
-import com.xdo.app.net.XLogin
 import com.xdo.app.update.UpdateChecker
 import com.xdo.app.update.UpdateInfo
 import com.xdo.app.update.UpdateState
@@ -39,9 +38,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     private val _snack = MutableStateFlow<String?>(null)
     val snack: StateFlow<String?> = _snack.asStateFlow()
 
-    /** X 登录 Cookie 状态（跨界面共享单例） */
-    val xCookie: StateFlow<String> = XLogin.cookie
-
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -71,18 +67,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun resetUpdate() {
         _updateState.value = UpdateState.Idle
-    }
-
-    /** 保存用户粘贴的 X Cookie */
-    fun setXCookie(value: String) {
-        XLogin.applyCookie(value, prefs)
-        _snack.value = "X 登录凭据已保存"
-    }
-
-    /** 清除 X 登录 Cookie */
-    fun clearXCookie() {
-        XLogin.clear(prefs)
-        _snack.value = "已清除 X 登录凭据"
     }
 
     fun checkUpdate(force: Boolean = false) {

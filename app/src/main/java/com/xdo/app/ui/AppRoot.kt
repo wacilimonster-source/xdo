@@ -13,7 +13,6 @@ import androidx.navigation.navArgument
 import com.xdo.app.AppEvents
 import com.xdo.app.ui.home.HomeScreen
 import com.xdo.app.ui.home.HomeViewModel
-import com.xdo.app.ui.login.LoginXScreen
 import com.xdo.app.ui.player.PlayerScreen
 import com.xdo.app.ui.resolve.ResolveScreen
 import com.xdo.app.ui.resolve.ResolveViewModel
@@ -24,7 +23,6 @@ object Routes {
     const val RESOLVE = "resolve"
     const val PLAYER = "player"
     const val SETTINGS = "settings"
-    const val LOGIN_X = "login_x"
 }
 
 @Composable
@@ -97,11 +95,7 @@ fun AppRoot(onOpenSettings: () -> Unit = {}) {
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
-                onOpenLoginX = { navController.navigate(Routes.LOGIN_X) { launchSingleTop = true } },
             )
-        }
-        composable(Routes.LOGIN_X) {
-            LoginXScreen(onBack = { navController.popBackStack() })
         }
     }
 }

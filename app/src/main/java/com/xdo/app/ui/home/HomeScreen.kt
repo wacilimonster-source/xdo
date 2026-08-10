@@ -65,6 +65,7 @@ import coil.compose.AsyncImage
 import com.xdo.app.R
 import com.xdo.app.data.DownloadRecord
 import com.xdo.app.data.RecordStatus
+import com.xdo.app.util.TweetLink
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -114,7 +115,16 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            SearchBar(search, { search = it })
+            SearchBar(
+                value = search,
+                onChange = { search = it },
+                showResolveButton = TweetLink.looksLikeTweetText(search),
+                onResolve = {
+                    val text = search
+                    search = ""
+                    viewModel.paste(text)
+                },
+            )
             clipboard?.let { text ->
                 ClipboardBanner(
                     onClick = { viewModel.paste(text) },
@@ -154,7 +164,12 @@ fun HomeScreen(
 }
 
 @Composable
-private fun SearchBar(value: String, onChange: (String) -> Unit) {
+private fun SearchBar(
+    value: String,
+    onChange: (String) -> Unit,
+    showResolveButton: Boolean,
+    onResolve: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -164,12 +179,19 @@ private fun SearchBar(value: String, onChange: (String) -> Unit) {
         androidx.compose.material3.OutlinedTextField(
             value = value,
             onValueChange = onChange,
-            placeholder = { Text("搜索标题 / 作者") },
+            placeholder = { Text("搜索标题 / 作者，或粘贴 X 链接解析") },
             leadingIcon = { Icon(Icons.Filled.Search, null) },
+            trailingIcon = {
+                if (showResolveButton) {
+                    IconButton(onClick = onResolve) {
+                        Icon(Icons.Filled.Download, "解析链接")
+                    }
+                }
+            },
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(52.dp),
             textStyle = MaterialTheme.typography.bodyMedium,
         )
     }
@@ -265,8 +287,13 @@ private fun RecordCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(4.dp))
+                val duration = record.durationMs?.let { formatDuration(it) }
                 Text(
-                    "@${record.handle.ifBlank { "unknown" }} · ${record.chosenLabel ?: ""}".trimEnd(' ', '·'),
+                    buildString {
+                        append("@${record.handle.ifBlank { "unknown" }}")
+                        if (!duration.isNullOrBlank()) append(" · $duration")
+                        if (!record.chosenLabel.isNullOrBlank()) append(" · ${record.chosenLabel}")
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                     maxLines = 1,
@@ -473,6 +500,15 @@ private fun formatSize(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> "%.1fMB".format(bytes / 1048576.0)
     bytes >= 1024 -> "%.0fKB".format(bytes / 1024.0)
     else -> "${bytes}B"
+}
+
+private fun formatDuration(ms: Long): String {
+    val totalSec = ms / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s)
+    else "%d:%02d".format(m, s)
 }
 
 private fun dateLabel(ts: Long): String =

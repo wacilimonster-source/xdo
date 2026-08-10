@@ -61,20 +61,18 @@ object XResolver {
      * 解析推文元数据。
      *
      * 双通道策略：
-     * 1) 主通道 X 官方 syndication（带可选 Cookie）；
+     * 1) 主通道 X 官方 syndication（公开匿名）；
      * 2) 主通道被拦截（tombstone / error / 异常）时，自动切换到免费匿名备用通道
      *    fxtwitter（实测对 syndication 拦截的公开推文可正常返回视频直链）。
      *
-     * 注意：synerication 的 tombstone 并不代表「该推文需要登录」——
-     * 它也会拦截大量正常公开推文；登录 Cookie 无法改变该行为，故不再优先引导用户登录。
-     *
-     * @param cookie 可选：X 登录 Cookie（auth_token; ct0 等）
+     * 注意：syndication 的 tombstone 并不代表「该推文需要登录」——
+     * 它也会拦截大量正常公开推文；X 登录 Cookie 无法改变该行为，全程无需登录。
      */
-    suspend fun resolve(tweetId: String, cookie: String? = null): ResolveResult =
+    suspend fun resolve(tweetId: String): ResolveResult =
         withContext(Dispatchers.IO) {
             try {
                 withTimeout(HARD_TIMEOUT_MS) {
-                    val primary = fetchSyndication(tweetId, cookie)
+                    val primary = fetchSyndication(tweetId)
                     when (primary) {
                         is PrimaryResult.Ok -> return@withTimeout primary.r
                         is PrimaryResult.NoVideo -> {
@@ -86,10 +84,7 @@ object XResolver {
                             if (fallback != null) return@withTimeout fallback
                             // 备用通道也失败：给出不误导用户的提示
                             return@withTimeout ResolveResult.Failure(
-                                if (cookie.isNullOrBlank())
-                                    "该推文暂时无法解析（X 未公开视频数据）。可稍后重试，或登录 X 后重试；仍失败可到浏览器打开确认是否删除/受限"
-                                else
-                                    "解析仍然失败，登录状态可能已失效，或该推文已删除/受限"
+                                "该推文暂时无法解析（X 未公开视频数据）。可稍后重试，或到浏览器打开确认是否删除/受限"
                             )
                         }
                     }
@@ -102,14 +97,14 @@ object XResolver {
         }
 
     /** 主通道：X syndication。tombstone/error/HTTP 失败返回 Blocked（交给备用通道） */
-    private suspend fun fetchSyndication(tweetId: String, cookie: String?): PrimaryResult {
+    private suspend fun fetchSyndication(tweetId: String): PrimaryResult {
         try {
             val url = SYNDICATION_URL.format(tweetId, (10000..99999).random())
-            val reqBuilder = Request.Builder().url(url)
+            val req = Request.Builder().url(url)
                 .header("User-Agent", UA)
                 .header("Accept", "application/json")
-            if (!cookie.isNullOrBlank()) reqBuilder.header("Cookie", cookie)
-            client.newCall(reqBuilder.build()).execute().use { resp ->
+                .build()
+            client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return PrimaryResult.Blocked
                 val body = resp.body ?: return PrimaryResult.Blocked
                 val text = safeRead(body)
@@ -124,7 +119,7 @@ object XResolver {
                 val durationMs = video.optLong("durationMs").takeIf { it > 0 }
                 val variants = video.optJSONArray("variants")
                     ?: return PrimaryResult.NoVideo
-                val qualities = parseVariants(variants, cookie)
+                val qualities = parseVariants(variants)
                 if (qualities.isEmpty()) return PrimaryResult.NoVideo
                 val user = json.optJSONObject("user")
                 return PrimaryResult.Ok(
@@ -183,7 +178,7 @@ object XResolver {
                             authorName = author?.optString("name") ?: "未知用户",
                             handle = author?.optString("screen_name") ?: "",
                             text = tweet.optString("text").take(120),
-                            posterUrl = null,
+                            posterUrl = media.optString("thumbnail_url").takeIf { it.isNotBlank() },
                             durationMs = (v.optDouble("duration") * 1000).toLong()
                                 .takeIf { it > 0 },
                             qualities = listOf(
@@ -230,7 +225,7 @@ object XResolver {
         ""
     }
 
-    private fun parseVariants(variants: JSONArray, cookie: String?): List<QualityOption> {
+    private fun parseVariants(variants: JSONArray): List<QualityOption> {
         val list = ArrayList<QualityOption>(variants.length() * 2)
         val seen = HashSet<String>()
         for (i in 0 until variants.length()) {
@@ -255,7 +250,7 @@ object XResolver {
                 }
                 // HLS 流：长视频（如 7 分钟）X 只提供 m3u8 分片流，需分片下载后合成。
                 // 直接下载 m3u8 当单文件会得到「只播前面一段」的损坏文件。
-                "application/x-mpegURL" -> list.addAll(parseHlsVariants(url, cookie))
+                "application/x-mpegURL" -> list.addAll(parseHlsVariants(url))
             }
         }
         // 按分辨率（宽高积）降序，码率作次级排序；
@@ -271,13 +266,13 @@ object XResolver {
      * 解析 HLS 主播放列表，为其中每个清晰度生成一项（带 isHls=true）。
      * 解析失败则兜底返回单个「HLS 流」选项，保证仍可下载。
      */
-    private fun parseHlsVariants(masterUrl: String, cookie: String?): List<QualityOption> {
+    private fun parseHlsVariants(masterUrl: String): List<QualityOption> {
         // HLS 子请求独立短超时，且失败兜底为单个「HLS 流」选项，绝不拖死主解析
         return runCatching {
-            val reqBuilder = Request.Builder().url(masterUrl)
+            val call = Request.Builder().url(masterUrl)
                 .header("User-Agent", UA)
-            if (!cookie.isNullOrBlank()) reqBuilder.header("Cookie", cookie)
-            val call = client.newCall(reqBuilder.build())
+                .build()
+                .let { client.newCall(it) }
             // 5s 硬超时，避免代理下 m3u8 拉取卡死
             val resp = kotlinx.coroutines.runBlocking {
                 withTimeout(5000) { call.execute() }
