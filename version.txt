@@ -1,6 +1,6 @@
 {
-  "versionCode": 5,
-  "versionName": "0.1.4",
-  "updateMessage": "新增 X 账号登录：支持在 App 内用 WebView 登录 X，或手动粘贴浏览器 Cookie；登录后可解析此前受限（需登录）的推文。同时优化受限推文的错误提示。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.4.apk"
+  "versionCode": 6,
+  "versionName": "0.1.5",
+  "updateMessage": "修复 App 内登录 X 页面空白：改用兼容的移动端登录流程，增加加载失败提示与重新加载；手动粘贴 Cookie 功能保持不变。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.5.apk"
 }
