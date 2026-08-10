@@ -47,43 +47,51 @@ object XResolver {
     /** 带硬超时的解析：任何卡死都会在 HARD_TIMEOUT 内转为失败，绝不死转圈 */
     private const val HARD_TIMEOUT_MS = 12_000L
 
+    /** 备用通道（fxtwitter）独立短超时，避免拖死整体解析 */
+    private const val FALLBACK_TIMEOUT_MS = 6_000L
+
+    /** 主通道结果：Ok=成功；NoVideo=数据完好但无视频（可信，不试备用）；Blocked=被拦截/异常（试备用） */
+    private sealed class PrimaryResult {
+        data class Ok(val r: ResolveResult.Success) : PrimaryResult()
+        object NoVideo : PrimaryResult()
+        object Blocked : PrimaryResult()
+    }
+
     /**
      * 解析推文元数据。
-     * @param cookie 可选：X 登录 Cookie（auth_token; ct0 等）。携带后可解析需登录的受限推文。
+     *
+     * 双通道策略：
+     * 1) 主通道 X 官方 syndication（带可选 Cookie）；
+     * 2) 主通道被拦截（tombstone / error / 异常）时，自动切换到免费匿名备用通道
+     *    fxtwitter（实测对 syndication 拦截的公开推文可正常返回视频直链）。
+     *
+     * 注意：synerication 的 tombstone 并不代表「该推文需要登录」——
+     * 它也会拦截大量正常公开推文；登录 Cookie 无法改变该行为，故不再优先引导用户登录。
+     *
+     * @param cookie 可选：X 登录 Cookie（auth_token; ct0 等）
      */
     suspend fun resolve(tweetId: String, cookie: String? = null): ResolveResult =
         withContext(Dispatchers.IO) {
             try {
                 withTimeout(HARD_TIMEOUT_MS) {
-                    val url = SYNDICATION_URL.format(tweetId, (10000..99999).random())
-                    val reqBuilder = Request.Builder().url(url)
-                        .header("User-Agent", UA)
-                        .header("Accept", "application/json")
-                    if (!cookie.isNullOrBlank()) reqBuilder.header("Cookie", cookie)
-                    client.newCall(reqBuilder.build()).execute().use { resp ->
-                        if (!resp.isSuccessful) {
-                            return@withTimeout ResolveResult.Failure("解析服务返回 ${resp.code}")
+                    val primary = fetchSyndication(tweetId, cookie)
+                    when (primary) {
+                        is PrimaryResult.Ok -> return@withTimeout primary.r
+                        is PrimaryResult.NoVideo -> {
+                            return@withTimeout ResolveResult.Failure("该推文没有视频")
                         }
-                        val body = resp.body ?: return@withTimeout ResolveResult.Failure("空响应")
-                        val text = safeRead(body)
-                        if (text.isBlank()) {
-                            return@withTimeout ResolveResult.Failure("解析服务返回空内容")
-                        }
-                        val json = JSONObject(text)
-                        if (json.has("error")) {
-                            return@withTimeout ResolveResult.Failure(json.optString("error"))
-                        }
-                        // X 对匿名/受限访问的推文返回 {"__typename":"Tweet","tombstone":{}}，
-                        // 不含任何内容。明确提示用户需登录 X 账号，而非误导成「没有视频」。
-                        if (json.has("tombstone") || json.optJSONObject("tombstone") != null) {
+                        // 通道被拦截：走备用通道
+                        PrimaryResult.Blocked -> {
+                            val fallback = fetchFxtwitter(tweetId)
+                            if (fallback != null) return@withTimeout fallback
+                            // 备用通道也失败：给出不误导用户的提示
                             return@withTimeout ResolveResult.Failure(
                                 if (cookie.isNullOrBlank())
-                                    "该推文需要登录 X 账号后才能获取（X 限制了匿名访问）。请在设置中登录 X 或粘贴 Cookie 后重试。"
+                                    "该推文暂时无法解析（X 未公开视频数据）。可稍后重试，或登录 X 后重试；仍失败可到浏览器打开确认是否删除/受限"
                                 else
-                                    "登录状态可能已失效，请到设置中重新登录 X 或更新 Cookie 后重试。"
+                                    "解析仍然失败，登录状态可能已失效，或该推文已删除/受限"
                             )
                         }
-                        parse(json, cookie)
                     }
                 }
             } catch (e: TimeoutCancellationException) {
@@ -92,6 +100,117 @@ object XResolver {
                 ResolveResult.Failure(e.message ?: "网络异常")
             }
         }
+
+    /** 主通道：X syndication。tombstone/error/HTTP 失败返回 Blocked（交给备用通道） */
+    private suspend fun fetchSyndication(tweetId: String, cookie: String?): PrimaryResult {
+        try {
+            val url = SYNDICATION_URL.format(tweetId, (10000..99999).random())
+            val reqBuilder = Request.Builder().url(url)
+                .header("User-Agent", UA)
+                .header("Accept", "application/json")
+            if (!cookie.isNullOrBlank()) reqBuilder.header("Cookie", cookie)
+            client.newCall(reqBuilder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return PrimaryResult.Blocked
+                val body = resp.body ?: return PrimaryResult.Blocked
+                val text = safeRead(body)
+                if (text.isBlank()) return PrimaryResult.Blocked
+                val json = JSONObject(text)
+                if (json.has("error")) return PrimaryResult.Blocked
+                // X 对匿名/受限访问返回 {"__typename":"Tweet","tombstone":{}}，不含内容。
+                if (json.has("tombstone")) return PrimaryResult.Blocked
+                val video = json.optJSONObject("video")
+                    ?: return PrimaryResult.NoVideo
+                val posterUrl = video.optString("poster").takeIf { it.isNotBlank() }
+                val durationMs = video.optLong("durationMs").takeIf { it > 0 }
+                val variants = video.optJSONArray("variants")
+                    ?: return PrimaryResult.NoVideo
+                val qualities = parseVariants(variants, cookie)
+                if (qualities.isEmpty()) return PrimaryResult.NoVideo
+                val user = json.optJSONObject("user")
+                return PrimaryResult.Ok(
+                    ResolveResult.Success(
+                        authorName = user?.optString("name", "未知用户") ?: "未知用户",
+                        handle = user?.optString("screen_name", "") ?: "",
+                        text = json.optString("text", "").take(120),
+                        posterUrl = posterUrl,
+                        durationMs = durationMs,
+                        qualities = qualities,
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            // 网络类异常视为通道不可用，交给备用通道再试一次
+            return PrimaryResult.Blocked
+        }
+    }
+
+    /** 备用通道内部结果：Found=拿到视频；NoVideo=数据完好但确实无视频；Unavailable=通道不可用 */
+    private sealed class FxtOutcome {
+        data class Found(val r: ResolveResult.Success) : FxtOutcome()
+        object NoVideo : FxtOutcome()
+        object Unavailable : FxtOutcome()
+    }
+
+    /**
+     * 备用通道：fxtwitter（免登录、免 Key 的第三方聚合）。
+     * 返回 null 表示该通道也不可用；「确实无视频」时返回 Failure。
+     */
+    private suspend fun fetchFxtwitter(tweetId: String): ResolveResult? {
+        val outcome: FxtOutcome = try {
+            withTimeout(FALLBACK_TIMEOUT_MS) {
+                val url = "https://api.fxtwitter.com/status/$tweetId"
+                val req = Request.Builder().url(url)
+                    .header("User-Agent", UA)
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use FxtOutcome.Unavailable
+                    val text = safeRead(resp.body ?: return@use FxtOutcome.Unavailable)
+                    val json = JSONObject(text)
+                    if (json.optInt("code") != 200) return@use FxtOutcome.Unavailable
+                    val tweet = json.optJSONObject("tweet") ?: return@use FxtOutcome.Unavailable
+                    val media = tweet.optJSONObject("media") ?: return@use FxtOutcome.Unavailable
+                    val videos = media.optJSONArray("videos")
+                    if (videos == null || videos.length() == 0) {
+                        return@use FxtOutcome.NoVideo
+                    }
+                    val v = videos.getJSONObject(0)
+                    val videoUrl = v.optString("url")
+                    if (videoUrl.isBlank()) return@use FxtOutcome.Unavailable
+                    val isHls = videoUrl.endsWith(".m3u8", ignoreCase = true)
+                    val author = tweet.optJSONObject("author")
+                    FxtOutcome.Found(
+                        ResolveResult.Success(
+                            authorName = author?.optString("name") ?: "未知用户",
+                            handle = author?.optString("screen_name") ?: "",
+                            text = tweet.optString("text").take(120),
+                            posterUrl = null,
+                            durationMs = (v.optDouble("duration") * 1000).toLong()
+                                .takeIf { it > 0 },
+                            qualities = listOf(
+                                QualityOption(
+                                    label = qualityLabel(videoUrl, 0).let {
+                                        if (isHls) "$it · HLS" else it
+                                    },
+                                    width = 0,
+                                    height = 0,
+                                    bitrateKbps = 0,
+                                    url = videoUrl,
+                                    isHls = isHls,
+                                )
+                            ),
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            FxtOutcome.Unavailable
+        }
+        return when (outcome) {
+            is FxtOutcome.Found -> outcome.r
+            FxtOutcome.NoVideo -> ResolveResult.Failure("该推文没有视频")
+            FxtOutcome.Unavailable -> null
+        }
+    }
 
     /** 安全读取响应体：避免某些代理返回的 chunked/gzip 流读不到 EOF 时无限阻塞 */
     private fun safeRead(body: ResponseBody): String = try {
@@ -109,31 +228,6 @@ object XResolver {
         buf.readUtf8()
     } catch (e: Exception) {
         ""
-    }
-
-    private fun parse(json: JSONObject, cookie: String?): ResolveResult {
-        val user = json.optJSONObject("user")
-        val authorName = user?.optString("name", "未知用户") ?: "未知用户"
-        val handle = user?.optString("screen_name", "") ?: ""
-        val text = json.optString("text", "").take(120)
-        val video = json.optJSONObject("video")
-            ?: return ResolveResult.Failure("该推文没有视频")
-        val posterUrl = video.optString("poster").takeIf { it.isNotBlank() }
-        val durationMs = video.optLong("durationMs").takeIf { it > 0 }
-        val variants = video.optJSONArray("variants")
-            ?: return ResolveResult.Failure("该推文视频暂不支持")
-
-        val qualities = parseVariants(variants, cookie)
-        if (qualities.isEmpty()) return ResolveResult.Failure("未找到可下载的视频源")
-
-        return ResolveResult.Success(
-            authorName = authorName,
-            handle = handle,
-            text = text,
-            posterUrl = posterUrl,
-            durationMs = durationMs,
-            qualities = qualities,
-        )
     }
 
     private fun parseVariants(variants: JSONArray, cookie: String?): List<QualityOption> {

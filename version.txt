@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "0.1.6",
-  "updateMessage": "继续修复 App 内登录 X 页面空白：改用设备原生 WebView UA、清理残留缓存与 Cookie、关闭小米设备 GPU 合成，并自动切换兼容登录入口。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.6.apk"
+  "versionCode": 8,
+  "versionName": "0.1.7",
+  "updateMessage": "新增 fxtwitter 匿名备用解析通道：官方接口被拦截（tombstone）的推文自动切换备用通道获取视频，无需登录即可下载更多视频。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.7.apk"
 }
