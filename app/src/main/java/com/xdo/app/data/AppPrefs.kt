@@ -20,9 +20,15 @@ class AppPrefs(context: Context) {
         get() = sp.getLong(KEY_LAST_UPDATE_CHECK, 0L)
         set(v) = sp.edit().putLong(KEY_LAST_UPDATE_CHECK, v).apply()
 
+    /** X 登录 Cookie（auth_token; ct0 等），用于解析受限/需登录的推文；为空表示未登录 */
+    var xCookie: String
+        get() = sp.getString(KEY_X_COOKIE, "") ?: ""
+        set(v) = sp.edit().putString(KEY_X_COOKIE, v).apply()
+
     private companion object {
         const val KEY_QUALITY_INDEX = "default_quality_index"
         const val KEY_WIFI_ONLY = "wifi_only"
         const val KEY_LAST_UPDATE_CHECK = "last_update_check"
+        const val KEY_X_COOKIE = "x_cookie"
     }
 }

@@ -2,9 +2,12 @@ package com.xdo.app.net
 
 import com.xdo.app.data.QualityOption
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.ResponseBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -24,10 +27,15 @@ sealed class ResolveResult {
 
 object XResolver {
 
+    // 代理/境外网络下，复用坏连接或服务器「半开」连接会导致 read 永远等不到 EOF。
+    // retryOnConnectionFailure(false) 避免把坏连接重试复用；timeout 兜底。
     private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
         .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     private val UA =
@@ -36,29 +44,74 @@ object XResolver {
     private const val SYNDICATION_URL =
         "https://cdn.syndication.twimg.com/tweet-result?id=%s&lang=en&token=%d"
 
-    suspend fun resolve(tweetId: String): ResolveResult = withContext(Dispatchers.IO) {
-        try {
-            val url = SYNDICATION_URL.format(tweetId, (10000..99999).random())
-            val req = Request.Builder().url(url)
-                .header("User-Agent", UA)
-                .header("Accept", "application/json")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    return@withContext ResolveResult.Failure("解析服务返回 ${resp.code}")
+    /** 带硬超时的解析：任何卡死都会在 HARD_TIMEOUT 内转为失败，绝不死转圈 */
+    private const val HARD_TIMEOUT_MS = 12_000L
+
+    /**
+     * 解析推文元数据。
+     * @param cookie 可选：X 登录 Cookie（auth_token; ct0 等）。携带后可解析需登录的受限推文。
+     */
+    suspend fun resolve(tweetId: String, cookie: String? = null): ResolveResult =
+        withContext(Dispatchers.IO) {
+            try {
+                withTimeout(HARD_TIMEOUT_MS) {
+                    val url = SYNDICATION_URL.format(tweetId, (10000..99999).random())
+                    val reqBuilder = Request.Builder().url(url)
+                        .header("User-Agent", UA)
+                        .header("Accept", "application/json")
+                    if (!cookie.isNullOrBlank()) reqBuilder.header("Cookie", cookie)
+                    client.newCall(reqBuilder.build()).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            return@withTimeout ResolveResult.Failure("解析服务返回 ${resp.code}")
+                        }
+                        val body = resp.body ?: return@withTimeout ResolveResult.Failure("空响应")
+                        val text = safeRead(body)
+                        if (text.isBlank()) {
+                            return@withTimeout ResolveResult.Failure("解析服务返回空内容")
+                        }
+                        val json = JSONObject(text)
+                        if (json.has("error")) {
+                            return@withTimeout ResolveResult.Failure(json.optString("error"))
+                        }
+                        // X 对匿名/受限访问的推文返回 {"__typename":"Tweet","tombstone":{}}，
+                        // 不含任何内容。明确提示用户需登录 X 账号，而非误导成「没有视频」。
+                        if (json.has("tombstone") || json.optJSONObject("tombstone") != null) {
+                            return@withTimeout ResolveResult.Failure(
+                                if (cookie.isNullOrBlank())
+                                    "该推文需要登录 X 账号后才能获取（X 限制了匿名访问）。请在设置中登录 X 或粘贴 Cookie 后重试。"
+                                else
+                                    "登录状态可能已失效，请到设置中重新登录 X 或更新 Cookie 后重试。"
+                            )
+                        }
+                        parse(json, cookie)
+                    }
                 }
-                val json = JSONObject(resp.body!!.string())
-                if (json.has("error")) {
-                    return@withContext ResolveResult.Failure(json.optString("error"))
-                }
-                parse(json)
+            } catch (e: TimeoutCancellationException) {
+                ResolveResult.Failure("解析超时（12s），请检查网络或代理后重试")
+            } catch (e: Exception) {
+                ResolveResult.Failure(e.message ?: "网络异常")
             }
-        } catch (e: Exception) {
-            ResolveResult.Failure(e.message ?: "网络异常")
         }
+
+    /** 安全读取响应体：避免某些代理返回的 chunked/gzip 流读不到 EOF 时无限阻塞 */
+    private fun safeRead(body: ResponseBody): String = try {
+        val src = body.source()
+        // 最多读 8MB，到上限即停止，防止异常超大响应拖死
+        val buf = okio.Buffer()
+        val limit = 8L * 1024 * 1024
+        var total = 0L
+        while (true) {
+            val read = src.read(buf, 8192)
+            if (read == -1L) break
+            total += read
+            if (total >= limit) break
+        }
+        buf.readUtf8()
+    } catch (e: Exception) {
+        ""
     }
 
-    private fun parse(json: JSONObject): ResolveResult {
+    private fun parse(json: JSONObject, cookie: String?): ResolveResult {
         val user = json.optJSONObject("user")
         val authorName = user?.optString("name", "未知用户") ?: "未知用户"
         val handle = user?.optString("screen_name", "") ?: ""
@@ -70,7 +123,7 @@ object XResolver {
         val variants = video.optJSONArray("variants")
             ?: return ResolveResult.Failure("该推文视频暂不支持")
 
-        val qualities = parseVariants(variants)
+        val qualities = parseVariants(variants, cookie)
         if (qualities.isEmpty()) return ResolveResult.Failure("未找到可下载的视频源")
 
         return ResolveResult.Success(
@@ -83,7 +136,7 @@ object XResolver {
         )
     }
 
-    private fun parseVariants(variants: JSONArray): List<QualityOption> {
+    private fun parseVariants(variants: JSONArray, cookie: String?): List<QualityOption> {
         val list = ArrayList<QualityOption>(variants.length() * 2)
         val seen = HashSet<String>()
         for (i in 0 until variants.length()) {
@@ -108,7 +161,7 @@ object XResolver {
                 }
                 // HLS 流：长视频（如 7 分钟）X 只提供 m3u8 分片流，需分片下载后合成。
                 // 直接下载 m3u8 当单文件会得到「只播前面一段」的损坏文件。
-                "application/x-mpegURL" -> list.addAll(parseHlsVariants(url))
+                "application/x-mpegURL" -> list.addAll(parseHlsVariants(url, cookie))
             }
         }
         // 按分辨率（宽高积）降序，码率作次级排序；
@@ -124,13 +177,20 @@ object XResolver {
      * 解析 HLS 主播放列表，为其中每个清晰度生成一项（带 isHls=true）。
      * 解析失败则兜底返回单个「HLS 流」选项，保证仍可下载。
      */
-    private fun parseHlsVariants(masterUrl: String): List<QualityOption> {
+    private fun parseHlsVariants(masterUrl: String, cookie: String?): List<QualityOption> {
+        // HLS 子请求独立短超时，且失败兜底为单个「HLS 流」选项，绝不拖死主解析
         return runCatching {
-            val req = Request.Builder().url(masterUrl)
-                .header("User-Agent", UA).build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@use null
-                resp.body?.string()
+            val reqBuilder = Request.Builder().url(masterUrl)
+                .header("User-Agent", UA)
+            if (!cookie.isNullOrBlank()) reqBuilder.header("Cookie", cookie)
+            val call = client.newCall(reqBuilder.build())
+            // 5s 硬超时，避免代理下 m3u8 拉取卡死
+            val resp = kotlinx.coroutines.runBlocking {
+                withTimeout(5000) { call.execute() }
+            }
+            resp.use {
+                if (!it.isSuccessful) return@runCatching null
+                it.body?.let { b -> safeRead(b) }
             }
         }.getOrNull()
             ?.let { parseMasterPlaylist(it, masterUrl) }

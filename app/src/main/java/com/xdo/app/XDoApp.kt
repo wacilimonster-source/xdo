@@ -6,6 +6,7 @@ import com.xdo.app.data.AppPrefs
 import com.xdo.app.dl.AppHolder
 import com.xdo.app.dl.AppPrefsHolder
 import com.xdo.app.dl.DownloadManager
+import com.xdo.app.net.XLogin
 import kotlinx.coroutines.flow.MutableSharedFlow
 
 /** 跨组件事件总线：分享进来的链接 */
@@ -42,6 +43,7 @@ class XDoApp : Application() {
         db = AppDatabase.get(this)
         prefs = AppPrefs(this)
         AppPrefsHolder.init(prefs)
+        XLogin.loadFrom(prefs)
         downloadManager = DownloadManager(this, db.recordDao())
         AppHolder.downloadManager = downloadManager
     }

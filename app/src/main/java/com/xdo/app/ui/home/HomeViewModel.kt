@@ -12,6 +12,7 @@ import com.xdo.app.XDoApp
 import com.xdo.app.data.DownloadRecord
 import com.xdo.app.data.RecordStatus
 import com.xdo.app.dl.AppHolder
+import com.xdo.app.dl.AppPrefsHolder
 import com.xdo.app.net.ResolveResult
 import com.xdo.app.net.XResolver
 import com.xdo.app.util.TweetLink
@@ -27,6 +28,7 @@ import org.json.JSONObject
 class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     private val dao = (app as XDoApp).db.recordDao()
+    private val prefs = AppPrefsHolder.get(app)
 
     val records: StateFlow<List<DownloadRecord>> = dao.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -104,7 +106,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     fun resolve(record: DownloadRecord) {
         viewModelScope.launch {
             dao.upsert(record.copy(status = RecordStatus.PARSING, errorMsg = null))
-            val result = XResolver.resolve(record.tweetId)
+            val result = XResolver.resolve(record.tweetId, prefs.xCookie)
             when (result) {
                 is ResolveResult.Success -> {
                     dao.upsert(record.copy(
