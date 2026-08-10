@@ -2,5 +2,5 @@
   "versionCode": 3,
   "versionName": "0.1.2",
   "updateMessage": "修复长视频下载不完整：新增 HLS(m3u8) 分片流下载与音视频合成，长视频（如 7 分钟）也能完整下载带声 MP4；并修复下载中途断流静默存成坏文件的问题。",
-  "apkDownloadUrl": "https://github.com/your/repo/releases/download/v0.1.2/xdo_v0.1.2.apk"
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.2.apk"
 }
