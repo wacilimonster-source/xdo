@@ -1,6 +1,6 @@
 {
-  "versionCode": 11,
-  "versionName": "0.2.0",
-  "updateMessage": "更换全新 App 图标：X 黑蓝渐变背景 + 白色视频播放三角与下载箭头，并支持 Android 13 主题单色图标。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.0.apk"
+  "versionCode": 12,
+  "versionName": "0.2.1",
+  "updateMessage": "播放器改为沉浸式全屏（隐藏状态栏/导航栏），移除底部播放与从头播放按钮，操作收敛到顶部半透明悬浮条，播放/暂停用播放器自带控制器；图标改为白卡片+深色播放与下载图形，更精致耐看。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.1.apk"
 }
