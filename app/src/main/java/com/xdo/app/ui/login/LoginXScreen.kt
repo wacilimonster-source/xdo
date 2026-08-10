@@ -1,11 +1,15 @@
 package com.xdo.app.ui.login
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.net.http.SslError
+import android.view.View
 import android.webkit.CookieManager
+import android.webkit.ConsoleMessage
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Column
@@ -36,17 +40,13 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.xdo.app.dl.AppPrefsHolder
 import com.xdo.app.net.XLogin
 
-// 使用 Android Chrome UA，避免 X 根据 Windows UA 下发与 WebView 不兼容的桌面登录页。
-// 同时去掉常见的 WebView "wv" 标识，降低 X 返回空白页的概率。
-private const val LOGIN_UA =
-    "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.50 Mobile Safari/537.36"
-
-private const val LOGIN_URL = "https://x.com/i/flow/login"
+private const val X_LOGIN_URL = "https://x.com/i/flow/login"
+private const val TWITTER_LOGIN_URL = "https://twitter.com/i/flow/login"
 
 /**
- * App 内 WebView 登录 X：打开登录流程，用户登录成功后从 CookieManager
- * 抠出 auth_token + ct0 存为 X 登录 Cookie。若 X 拒绝 WebView 登录，
- * 用户可改用设置页「粘贴 Cookie」手动填入。
+ * X 登录页。
+ * X 的登录页是 React 单页应用，部分 Android WebView 内核会加载到空 DOM。
+ * 页面内容为空时自动切换到 twitter.com 旧入口，并提供重试按钮。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,6 +55,7 @@ fun LoginXScreen(onBack: () -> Unit) {
     var status by remember { mutableStateOf("正在打开 X 登录页…") }
     var saved by remember { mutableStateOf(false) }
     var hasError by remember { mutableStateOf(false) }
+    var usingFallback by remember { mutableStateOf(false) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     Scaffold(
@@ -76,68 +77,35 @@ fun LoginXScreen(onBack: () -> Unit) {
             AndroidView(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 factory = { ctx ->
-                    val cm = CookieManager.getInstance()
-                    cm.setAcceptCookie(true)
-                    WebView(ctx).apply {
-                        webViewRef = this
-                        setBackgroundColor(android.graphics.Color.WHITE)
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.databaseEnabled = true
-                        settings.loadsImagesAutomatically = true
-                        settings.mediaPlaybackRequiresUserGesture = false
-                        settings.userAgentString = LOGIN_UA
-                        cm.setAcceptThirdPartyCookies(this, true)
-                        webChromeClient = WebChromeClient()
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(
-                                view: WebView?,
-                                url: String?,
-                                favicon: Bitmap?,
-                            ) {
-                                loading = true
-                                hasError = false
-                                status = "正在加载 X 登录页…"
-                            }
-
-                            override fun onPageFinished(view: WebView?, url: String?) {
-                                loading = false
-                                if (saved) return
-                                val cookie = extractXCookie(cm)
-                                if (cookie != null) {
-                                    saved = true
-                                    status = "已获取登录凭据 ✓，可点击完成返回"
-                                    XLogin.applyCookie(cookie, AppPrefsHolder.get(ctx))
-                                } else if (!hasError) {
-                                    status = "请在页面中登录你的 X 账号…"
-                                }
-                            }
-
-                            override fun onReceivedError(
-                                view: WebView?,
-                                request: WebResourceRequest?,
-                                error: WebResourceError?,
-                            ) {
-                                if (request?.isForMainFrame == true) {
-                                    loading = false
-                                    hasError = true
-                                    status = "X 登录页加载失败：${error?.description ?: "网络异常"}"
-                                }
-                            }
-
-                            override fun onReceivedSslError(
-                                view: WebView?,
-                                handler: android.webkit.SslErrorHandler?,
-                                error: SslError?,
-                            ) {
-                                // 不接受异常证书，避免中间人攻击；用户可通过重新加载恢复。
-                                handler?.cancel()
+                    createLoginWebView(
+                        context = ctx,
+                        onLoading = {
+                            loading = true
+                            hasError = false
+                        },
+                        onStatus = { status = it },
+                        onSaved = {
+                            saved = true
+                            loading = false
+                        },
+                        onError = {
+                            loading = false
+                            hasError = true
+                            status = it
+                        },
+                        onEmptyPage = { webView ->
+                            if (!usingFallback) {
+                                usingFallback = true
+                                status = "X 登录页未渲染，正在切换兼容入口…"
+                                webView.loadUrl(TWITTER_LOGIN_URL)
+                            } else {
                                 loading = false
                                 hasError = true
-                                status = "X 登录页证书校验失败，请检查系统时间或网络代理"
+                                status = "登录页内容无法加载，请更新系统 WebView 或改用粘贴 Cookie"
                             }
-                        }
-                        loadUrl(LOGIN_URL)
+                        },
+                    ).also {
+                        webViewRef = it
                     }
                 },
                 update = { webViewRef = it },
@@ -152,8 +120,9 @@ fun LoginXScreen(onBack: () -> Unit) {
                 Button(
                     onClick = {
                         hasError = false
+                        usingFallback = false
                         status = "正在重新加载 X 登录页…"
-                        webViewRef?.loadUrl(LOGIN_URL)
+                        webViewRef?.loadUrl(X_LOGIN_URL)
                     },
                     modifier = Modifier.align(Alignment.CenterHorizontally),
                 ) {
@@ -165,6 +134,100 @@ fun LoginXScreen(onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             ) {
                 Text(if (saved) "完成" else "返回（也可改用粘贴 Cookie）")
+            }
+        }
+    }
+}
+
+private fun createLoginWebView(
+    context: Context,
+    onLoading: () -> Unit,
+    onStatus: (String) -> Unit,
+    onSaved: () -> Unit,
+    onError: (String) -> Unit,
+    onEmptyPage: (WebView) -> Unit,
+): WebView {
+    val cookieManager = CookieManager.getInstance()
+    cookieManager.setAcceptCookie(true)
+    return WebView(context).apply {
+        setBackgroundColor(android.graphics.Color.WHITE)
+        // 某些小米设备的 WebView GPU 合成会把跨域 React 页面合成为纯白。
+        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            databaseEnabled = true
+            loadsImagesAutomatically = true
+            blockNetworkImage = false
+            cacheMode = WebSettings.LOAD_NO_CACHE
+            mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+            // 使用设备 WebView 的真实 UA，不伪装为 Windows/Pixel，减少 X 风控误判。
+            userAgentString = userAgentString
+        }
+        cookieManager.setAcceptThirdPartyCookies(this, true)
+        // 上一轮失败可能留下残缺 guest/session Cookie，先清空再启动全新登录流程。
+        clearCache(true)
+        clearHistory()
+        cookieManager.removeAllCookies {
+            cookieManager.flush()
+            post { loadUrl(X_LOGIN_URL) }
+        }
+        webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                    onStatus("登录页脚本错误：${message.message().take(80)}")
+                }
+                return true
+            }
+        }
+        webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                onLoading()
+                onStatus("正在加载 X 登录页…")
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                if (view == null) return
+                val cookie = extractXCookie(cookieManager)
+                if (cookie != null) {
+                    onSaved()
+                    onStatus("已获取登录凭据 ✓，可点击完成返回")
+                    XLogin.applyCookie(cookie, AppPrefsHolder.get(context))
+                    return
+                }
+                // onPageFinished 只表示 HTML 到达，不代表 React 已经挂载；延迟检测可见内容。
+                view.postDelayed({
+                    view.evaluateJavascript(
+                        "(function(){var b=document.body;return b?(b.innerText.length+'|'+document.documentElement.innerHTML.length):'0|0';})()",
+                    ) { result ->
+                        val numbers = Regex("(\\d+)\\|(\\d+)").find(result ?: "")
+                        val textLength = numbers?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                        val htmlLength = numbers?.groupValues?.get(2)?.toIntOrNull() ?: 0
+                        if (textLength < 5 && htmlLength < 1000) onEmptyPage(view)
+                        else {
+                            onStatus("请在页面中登录你的 X 账号…")
+                        }
+                    }
+                }, 1500L)
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?,
+            ) {
+                if (request?.isForMainFrame == true) {
+                    onError("X 登录页加载失败：${error?.description ?: "网络异常"}")
+                }
+            }
+
+            override fun onReceivedSslError(
+                view: WebView?,
+                handler: android.webkit.SslErrorHandler?,
+                error: SslError?,
+            ) {
+                handler?.cancel()
+                onError("X 登录页证书校验失败，请检查系统时间或网络代理")
             }
         }
     }

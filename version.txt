@@ -1,6 +1,6 @@
 {
-  "versionCode": 6,
-  "versionName": "0.1.5",
-  "updateMessage": "修复 App 内登录 X 页面空白：改用兼容的移动端登录流程，增加加载失败提示与重新加载；手动粘贴 Cookie 功能保持不变。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.5.apk"
+  "versionCode": 7,
+  "versionName": "0.1.6",
+  "updateMessage": "继续修复 App 内登录 X 页面空白：改用设备原生 WebView UA、清理残留缓存与 Cookie、关闭小米设备 GPU 合成，并自动切换兼容登录入口。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.6.apk"
 }
