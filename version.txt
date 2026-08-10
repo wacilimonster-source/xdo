@@ -1,6 +1,6 @@
 {
-  "versionCode": 10,
-  "versionName": "0.1.9",
-  "updateMessage": "启动后自动检查更新（每 6 小时一次）；更新窗口全局可见，下载中实时显示进度条、百分比与已下载/总大小；任何页面都能看到更新下载进度。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.1.9.apk"
+  "versionCode": 11,
+  "versionName": "0.2.0",
+  "updateMessage": "更换全新 App 图标：X 黑蓝渐变背景 + 白色视频播放三角与下载箭头，并支持 Android 13 主题单色图标。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.0.apk"
 }

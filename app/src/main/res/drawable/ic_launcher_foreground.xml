@@ -1,26 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- X 下载助手图标：下载箭头 -->
+<!-- X 下载助手图标前景：白色视频播放三角 + 白色下载箭头 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- 白色圆底 -->
+    <!-- 播放三角 -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,54m-38,0a38,38 0,1 1,76 0a38,38 0,1 1,-76 0" />
-    <!-- 下载箭头（X 蓝） -->
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,32 L72,58 L36,58 Z" />
+    <!-- 下载箭头竖杆 -->
     <path
-        android:fillColor="#1DA1F2"
-        android:pathData="M54,30 L54,58 M42,48 L54,60 L66,48"
-        android:strokeColor="#1DA1F2"
-        android:strokeWidth="7"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="8"
         android:strokeLineCap="round"
-        android:strokeLineJoin="round" />
-    <!-- 底线 -->
+        android:pathData="M54,64 L54,78" />
+    <!-- 下载箭头头部 -->
     <path
-        android:strokeColor="#1DA1F2"
-        android:strokeWidth="7"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="8"
         android:strokeLineCap="round"
-        android:pathData="M32,72 L76,72" />
+        android:strokeLineJoin="round"
+        android:pathData="M46,76 L54,84 L62,76" />
 </vector>
