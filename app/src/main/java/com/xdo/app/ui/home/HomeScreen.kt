@@ -61,7 +61,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
 import com.xdo.app.R
 import com.xdo.app.data.DownloadRecord
 import com.xdo.app.data.RecordStatus
@@ -310,30 +311,30 @@ private fun RecordCard(
 
 @Composable
 private fun Poster(record: DownloadRecord) {
-    Box(
+    val poster = record.posterUrl
+    SubcomposeAsyncImage(
+        model = poster,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
         modifier = Modifier
             .size(64.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        val poster = record.posterUrl
-        if (!poster.isNullOrBlank()) {
-            AsyncImage(
-                model = poster,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        } else {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Filled.PlayArrow,
-                    null,
-                    tint = MaterialTheme.colorScheme.outline,
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-        }
+        loading = { PosterPlaceholder() },
+        error = { PosterPlaceholder() },
+        success = { SubcomposeAsyncImageContent() },
+    )
+}
+
+@Composable
+private fun PosterPlaceholder() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Icon(
+            Icons.Filled.PlayArrow,
+            null,
+            tint = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.size(28.dp),
+        )
     }
 }
 

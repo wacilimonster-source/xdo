@@ -178,7 +178,8 @@ object XResolver {
                             authorName = author?.optString("name") ?: "未知用户",
                             handle = author?.optString("screen_name") ?: "",
                             text = tweet.optString("text").take(120),
-                            posterUrl = media.optString("thumbnail_url").takeIf { it.isNotBlank() },
+                            posterUrl = v.optString("thumbnail_url").takeIf { it.isNotBlank() }
+                            ?: media.optString("thumbnail_url").takeIf { it.isNotBlank() },
                             durationMs = (v.optDouble("duration") * 1000).toLong()
                                 .takeIf { it > 0 },
                             qualities = listOf(

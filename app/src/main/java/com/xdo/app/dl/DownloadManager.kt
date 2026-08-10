@@ -314,9 +314,16 @@ class DownloadManager(
 private fun DownloadRecord.titleForNotif(): String =
     text.take(18).ifBlank { "X 视频" }
 
+/** 相册文件名：取帖子内容前 20 字符（去非法字符），追加清晰度后缀 */
 private fun DownloadRecord.fileName(): String {
-    val q = chosenLabel?.replace("·", "-")?.replace(" ", "") ?: "video"
-    return "${handle.ifBlank { "x" }}_${tweetId}_$q.mp4"
+    val base = text
+        .replace(Regex("[\\\\/:*?\"<>|\\r\\n]"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .take(20)
+        .ifBlank { handle.ifBlank { "X视频" } }
+    val q = chosenLabel?.replace("·", "-")?.replace(" ", "") ?: ""
+    return if (q.isBlank()) "$base.mp4" else "${base}_$q.mp4"
 }
 
 class AppHolder {
