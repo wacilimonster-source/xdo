@@ -2,6 +2,7 @@ package com.xdo.app.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -17,6 +18,9 @@ import com.xdo.app.ui.player.PlayerScreen
 import com.xdo.app.ui.resolve.ResolveScreen
 import com.xdo.app.ui.resolve.ResolveViewModel
 import com.xdo.app.ui.settings.SettingsScreen
+import com.xdo.app.ui.settings.UpdateDialog
+import com.xdo.app.update.UpdateManager
+import com.xdo.app.update.UpdateState
 
 object Routes {
     const val HOME = "home"
@@ -29,6 +33,22 @@ object Routes {
 fun AppRoot(onOpenSettings: () -> Unit = {}) {
     val navController = rememberNavController()
     val homeViewModel: HomeViewModel = viewModel()
+
+    // 启动时自动检查更新（6 小时节流）；CheckState 全局可见
+    LaunchedEffect(Unit) {
+        UpdateManager.autoCheck()
+    }
+    val updateState by UpdateManager.state.collectAsState()
+
+    val updateInfo = (updateState as? UpdateState.Available)?.info
+    updateInfo?.let { info ->
+        UpdateDialog(
+            info = info,
+            state = updateState,
+            onDownload = { UpdateManager.downloadAndInstall(info) },
+            onDismiss = { UpdateManager.reset() },
+        )
+    }
 
     // 分享/粘贴链接进来 → 解析并跳解析页
     LaunchedEffect(Unit) {

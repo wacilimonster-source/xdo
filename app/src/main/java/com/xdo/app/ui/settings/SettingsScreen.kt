@@ -44,7 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.xdo.app.update.UpdateInfo
+import com.xdo.app.update.UpdateManager
 import com.xdo.app.update.UpdateState
 
 private val QUALITY_LABELS = listOf(
@@ -63,8 +63,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     val vm: SettingsViewModel = viewModel()
     val defaultQualityIndex by vm.defaultQualityIndex.collectAsState()
     val wifiOnly by vm.wifiOnly.collectAsState()
-    val updateState by vm.updateState.collectAsState()
     val snack by vm.snack.collectAsState()
+    val updateState by UpdateManager.state.collectAsState()
 
     var showQualityPicker by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
@@ -126,6 +126,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             )
             HorizontalDivider()
 
+            // 更新检查：状态由全局 UpdateManager 维护，主界面也可看到进度
             SectionTitle("版本")
             SettingRow(
                 title = "当前版本 v${vm.versionName}",
@@ -139,7 +140,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 OutlinedButton(
-                    onClick = { vm.checkUpdate(force = true) },
+                    onClick = { UpdateManager.checkNow(force = true) },
                     enabled = updateState != UpdateState.Checking,
                 ) {
                     Text(
@@ -228,17 +229,7 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     // 粘贴 Cookie 弹窗已移除：v0.1.8 起全程免登录，X 登录凭据已不再需要
 
-    // 更新弹窗
-    updateInfo?.let { info ->
-        UpdateDialog(
-            info = info,
-            state = updateState,
-            onDownload = { vm.downloadAndInstall(info) },
-            onDismiss = {
-                vm.resetUpdate()
-            },
-        )
-    }
+    // 更新弹窗：全局 UpdateManager 状态由 AppRoot 统一展示，此处不重复弹
 }
 
 @Composable
@@ -278,51 +269,4 @@ private fun SettingRow(
         }
         trailing?.invoke()
     }
-}
-
-@Composable
-private fun UpdateDialog(
-    info: UpdateInfo,
-    state: UpdateState,
-    onDownload: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("发现新版本 v${info.versionName}") },
-        text = {
-            Column {
-                Text(info.updateMessage)
-                if (state is UpdateState.Downloading) {
-                    Spacer(Modifier.height(12.dp))
-                    LinearProgressIndicator(
-                        progress = { state.progress / 100f },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "下载中 ${state.progress}%",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                if (state is UpdateState.DownloadFailed) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        state.reason,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            when (state) {
-                is UpdateState.Downloading -> Text("下载中…")
-                else -> TextButton(onClick = onDownload) { Text("立即更新") }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("稍后再说") }
-        },
-    )
 }

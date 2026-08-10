@@ -22,7 +22,11 @@ sealed class UpdateState {
     data class Available(val info: UpdateInfo) : UpdateState()
     object UpToDate : UpdateState()
     object CheckFailed : UpdateState()
-    data class Downloading(val progress: Int) : UpdateState()
+    data class Downloading(
+        val progress: Int,
+        val downloadedBytes: Long = 0L,
+        val totalBytes: Long = 0L,
+    ) : UpdateState()
     data class DownloadFailed(val reason: String) : UpdateState()
 }
 
