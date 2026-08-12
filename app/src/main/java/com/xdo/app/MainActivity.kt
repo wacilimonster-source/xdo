@@ -42,7 +42,8 @@ class MainActivity : ComponentActivity() {
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
             else -> null
         } ?: return
-        if (TweetLink.looksLikeTweetText(text)) {
+        // 严格过滤：仅真正的 X 推文链接（含 status/数字）才触发解析，其他分享静默忽略
+        if (TweetLink.extractTweetId(text) != null) {
             AppEvents.emitShare(text)
         }
     }

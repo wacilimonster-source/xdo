@@ -1,7 +1,9 @@
 package com.xdo.app.ui.home
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,9 +45,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -86,6 +91,7 @@ fun HomeScreen(
 
     LaunchedEffect(Unit) {
         viewModel.checkClipboard()
+        viewModel.maybeBackfillMeta()
         viewModel.snack.collect { snackbarHostState.showSnackbar(it) }
     }
 
@@ -143,20 +149,52 @@ fun HomeScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     items(filtered, key = { it.id }) { record ->
-                        RecordCard(
-                            record = record,
-                            onClick = {
-                                when (record.status) {
-                                    RecordStatus.DONE -> onOpenPlayer(record.id)
-                                    RecordStatus.READY,
-                                    RecordStatus.PARSING,
-                                    RecordStatus.FAILED,
-                                    -> onOpenResolve(record.id)
-                                    else -> Unit
+                        val dismissState = rememberSwipeToDismissBoxState(
+                            confirmValueChange = { value ->
+                                if (value == SwipeToDismissBoxValue.StartToEnd) {
+                                    viewModel.deleteRecord(record)
+                                    true
+                                } else {
+                                    false
                                 }
                             },
-                            viewModel = viewModel,
                         )
+                        SwipeToDismissBox(
+                            state = dismissState,
+                            enableDismissFromStartToEnd = true,
+                            enableDismissFromEndToStart = false,
+                            backgroundContent = {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.errorContainer),
+                                    contentAlignment = Alignment.CenterStart,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Delete,
+                                        "删除",
+                                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.padding(start = 20.dp),
+                                    )
+                                }
+                            },
+                        ) {
+                            RecordCard(
+                                record = record,
+                                onClick = {
+                                    when (record.status) {
+                                        RecordStatus.DONE -> onOpenPlayer(record.id)
+                                        RecordStatus.READY,
+                                        RecordStatus.PARSING,
+                                        RecordStatus.FAILED,
+                                        -> onOpenResolve(record.id)
+                                        else -> Unit
+                                    }
+                                },
+                                viewModel = viewModel,
+                            )
+                        }
                     }
                 }
             }
@@ -256,18 +294,23 @@ private fun EmptyState() {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecordCard(
     record: DownloadRecord,
     onClick: () -> Unit,
     viewModel: HomeViewModel,
 ) {
+    var menuExpanded by remember { mutableStateOf(false) }
     Surface(
         shape = RoundedCornerShape(12.dp),
         tonalElevation = 1.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { menuExpanded = true },
+            ),
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -299,7 +342,7 @@ private fun RecordCard(
                 StatusRow(record, viewModel)
             }
             Spacer(Modifier.width(8.dp))
-            MoreMenu(record, viewModel)
+            MoreMenu(record, viewModel, menuExpanded, { menuExpanded = it })
         }
     }
 }
@@ -406,19 +449,23 @@ private fun StatusRow(record: DownloadRecord, viewModel: HomeViewModel) {
 }
 
 @Composable
-private fun MoreMenu(record: DownloadRecord, viewModel: HomeViewModel) {
-    var expanded by remember { mutableStateOf(false) }
+private fun MoreMenu(
+    record: DownloadRecord,
+    viewModel: HomeViewModel,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+) {
     Box {
-        IconButton(onClick = { expanded = true }) {
+        IconButton(onClick = { onExpandedChange(true) }) {
             Icon(Icons.Filled.MoreVert, "更多")
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
             when (record.status) {
                 RecordStatus.DOWNLOADING -> {
                     DropdownMenuItem(
                         text = { Text("暂停") },
                         onClick = {
-                            expanded = false
+                            onExpandedChange(false)
                             viewModel.pause(record)
                         },
                         leadingIcon = { Icon(Icons.Filled.Pause, null) },
@@ -426,7 +473,7 @@ private fun MoreMenu(record: DownloadRecord, viewModel: HomeViewModel) {
                     DropdownMenuItem(
                         text = { Text("取消") },
                         onClick = {
-                            expanded = false
+                            onExpandedChange(false)
                             viewModel.cancel(record)
                         },
                         leadingIcon = { Icon(Icons.Filled.Cancel, null) },
@@ -436,7 +483,7 @@ private fun MoreMenu(record: DownloadRecord, viewModel: HomeViewModel) {
                     DropdownMenuItem(
                         text = { Text("继续下载") },
                         onClick = {
-                            expanded = false
+                            onExpandedChange(false)
                             viewModel.startOrResume(record)
                         },
                         leadingIcon = { Icon(Icons.Filled.PlayArrow, null) },
@@ -444,7 +491,7 @@ private fun MoreMenu(record: DownloadRecord, viewModel: HomeViewModel) {
                     DropdownMenuItem(
                         text = { Text("取消") },
                         onClick = {
-                            expanded = false
+                            onExpandedChange(false)
                             viewModel.cancel(record)
                         },
                         leadingIcon = { Icon(Icons.Filled.Cancel, null) },
@@ -454,7 +501,7 @@ private fun MoreMenu(record: DownloadRecord, viewModel: HomeViewModel) {
                     DropdownMenuItem(
                         text = { Text("重试") },
                         onClick = {
-                            expanded = false
+                            onExpandedChange(false)
                             viewModel.retryResolve(record)
                         },
                         leadingIcon = { Icon(Icons.Filled.Refresh, null) },
@@ -464,7 +511,7 @@ private fun MoreMenu(record: DownloadRecord, viewModel: HomeViewModel) {
                     DropdownMenuItem(
                         text = { Text("分享文件") },
                         onClick = {
-                            expanded = false
+                            onExpandedChange(false)
                             viewModel.shareFile(record)
                         },
                         leadingIcon = { Icon(Icons.Filled.Share, null) },
@@ -474,7 +521,7 @@ private fun MoreMenu(record: DownloadRecord, viewModel: HomeViewModel) {
             DropdownMenuItem(
                 text = { Text("复制链接") },
                 onClick = {
-                    expanded = false
+                    onExpandedChange(false)
                     viewModel.copyLink(record)
                 },
                 leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, null) },
@@ -482,7 +529,7 @@ private fun MoreMenu(record: DownloadRecord, viewModel: HomeViewModel) {
             DropdownMenuItem(
                 text = { Text("删除") },
                 onClick = {
-                    expanded = false
+                    onExpandedChange(false)
                     viewModel.deleteRecord(record)
                 },
                 leadingIcon = { Icon(Icons.Filled.Delete, null) },

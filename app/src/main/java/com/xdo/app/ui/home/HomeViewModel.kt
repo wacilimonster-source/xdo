@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.json.JSONArray
@@ -42,6 +43,22 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearPending() {
         _pendingResolve.value = null
+    }
+
+    /** 旧记录元数据回填：标题/封面缺失时静默重新解析一次（每次启动最多一次） */
+    private var backfillTriggered = false
+
+    fun maybeBackfillMeta() {
+        if (backfillTriggered) return
+        backfillTriggered = true
+        viewModelScope.launch {
+            records.first { list ->
+                list.firstOrNull { it.needsMetaBackfill() }?.let { rec ->
+                    resolve(rec)
+                    true
+                } ?: false
+            }
+        }
     }
 
     fun checkClipboard() {
@@ -207,3 +224,8 @@ fun decodeVariants(json: String): List<com.xdo.app.data.QualityOption> {
     }
     return list
 }
+
+/** 是否缺少标题或封面，需要静默回填解析 */
+private fun DownloadRecord.needsMetaBackfill(): Boolean =
+    (text.isBlank() || posterUrl.isNullOrBlank()) &&
+        (status == RecordStatus.READY || status == RecordStatus.DONE || status == RecordStatus.FAILED)
