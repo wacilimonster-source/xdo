@@ -281,20 +281,15 @@ private fun RecordCard(
                     .height(IntrinsicSize.Min),
             ) {
                 Text(
-                    record.text.ifBlank { record.authorName.ifBlank { "X 视频" } },
+                    recordTitle(record),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(4.dp))
-                val duration = record.durationMs?.let { formatDuration(it) }
                 Text(
-                    buildString {
-                        append("@${record.handle.ifBlank { "unknown" }}")
-                        if (!duration.isNullOrBlank()) append(" · $duration")
-                        if (!record.chosenLabel.isNullOrBlank()) append(" · ${record.chosenLabel}")
-                    },
+                    "下载于 ${dateTimeLabel(record.completedAt ?: record.createdAt)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                     maxLines = 1,
@@ -401,7 +396,7 @@ private fun StatusRow(record: DownloadRecord, viewModel: HomeViewModel) {
         RecordStatus.DONE -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    formatSize(record.fileSize ?: 0) + " · " + dateLabel(record.completedAt ?: record.createdAt),
+                    formatSize(record.fileSize ?: 0),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
@@ -503,14 +498,19 @@ private fun formatSize(bytes: Long): String = when {
     else -> "${bytes}B"
 }
 
-private fun formatDuration(ms: Long): String {
-    val totalSec = ms / 1000
-    val h = totalSec / 3600
-    val m = (totalSec % 3600) / 60
-    val s = totalSec % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s)
-    else "%d:%02d".format(m, s)
+/** 标题：取帖子正文中不含作者名/别名的首个非空行（去除品牌水印与装饰行） */
+private fun recordTitle(record: DownloadRecord): String {
+    val lines = record.text
+        .replace("\r", "")
+        .split("\n")
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+    val content = lines.firstOrNull { line ->
+        (record.authorName.isBlank() || !line.contains(record.authorName)) &&
+            (record.handle.isBlank() || !line.contains(record.handle))
+    } ?: lines.firstOrNull()
+    return (content ?: "X 视频").let { if (it.length > 40) it.take(40) else it }
 }
 
-private fun dateLabel(ts: Long): String =
-    SimpleDateFormat("MM-dd", Locale.getDefault()).format(Date(ts))
+private fun dateTimeLabel(ts: Long): String =
+    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(ts))

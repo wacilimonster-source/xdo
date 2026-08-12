@@ -1,6 +1,6 @@
 {
-  "versionCode": 13,
-  "versionName": "0.2.2",
-  "updateMessage": "修复列表视频缩略图不显示（备用解析通道封面字段取错，已修正并加图上失败占位）；下载文件改用帖子内容截取命名（标题+清晰度）。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.2.apk"
+  "versionCode": 14,
+  "versionName": "0.2.3",
+  "updateMessage": "下载列表卡片重做：标题取帖子正文核心内容（自动剔除作者名/品牌水印行），不再显示用户名与清晰度；第二行统一展示下载日期（yyyy-MM-dd HH:mm）。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.3.apk"
 }
