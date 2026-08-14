@@ -14,8 +14,8 @@ android {
         minSdk = 26
         targetSdk = 34
         // 发布新版本时同步修改；version.txt 的 versionCode 必须 >= 此值（判更新唯一依据）
-        versionCode = 16
-        versionName = "0.2.5"
+        versionCode = 17
+        versionName = "0.2.6"
     }
 
     buildTypes {

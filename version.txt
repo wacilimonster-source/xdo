@@ -1,6 +1,6 @@
 {
-  "versionCode": 16,
-  "versionName": "0.2.5",
-  "updateMessage": "更换全新App图标：金色X字母+下载箭头设计，深色圆角背景。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.5.apk"
+  "versionCode": 17,
+  "versionName": "0.2.6",
+  "updateMessage": "修复图标被过度裁剪：图片移至前景安全区（中心 66%），深色纯色背景，蒙版只裁透明边缘，核心内容完整显示。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.6.apk"
 }
