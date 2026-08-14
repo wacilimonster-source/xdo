@@ -1,6 +1,6 @@
 {
-  "versionCode": 17,
-  "versionName": "0.2.6",
-  "updateMessage": "修复图标被过度裁剪：图片移至前景安全区（中心 66%），深色纯色背景，蒙版只裁透明边缘，核心内容完整显示。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.6.apk"
+  "versionCode": 18,
+  "versionName": "0.2.7",
+  "updateMessage": "图标不再套用系统蒙版裁切：移除自适应图标，改用原图直接作为启动图标（等比缩放、完整显示，不裁剪）。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.7.apk"
 }

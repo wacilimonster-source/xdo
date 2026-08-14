@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- X下载助手图标前景：图片缩小到中心安全区（inset 18%，蒙版只裁透明边缘不伤内容） -->
-<inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:inset="18%">
-    <bitmap
-        android:src="@drawable/ic_launcher_bg"
-        android:gravity="center" />
-</inset>
