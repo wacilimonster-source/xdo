@@ -1,6 +1,6 @@
 {
-  "versionCode": 15,
-  "versionName": "0.2.4",
-  "updateMessage": "旧记录自动回填标题与封面（启动后静默补解析一次）；分享入口严格过滤（仅含 status 链接的推文分享才触发，其他分享不再唤起）；列表支持向右滑动删除、长按卡片打开操作菜单。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.4.apk"
+  "versionCode": 16,
+  "versionName": "0.2.5",
+  "updateMessage": "更换全新App图标：金色X字母+下载箭头设计，深色圆角背景。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.5.apk"
 }
