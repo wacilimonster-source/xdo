@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -88,6 +89,7 @@ fun HomeScreen(
     val clipboard by viewModel.clipboardLink.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var search by remember { mutableStateOf("") }
+    var fileDeletedRecord by remember { mutableStateOf<DownloadRecord?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.checkClipboard()
@@ -184,7 +186,13 @@ fun HomeScreen(
                                 record = record,
                                 onClick = {
                                     when (record.status) {
-                                        RecordStatus.DONE -> onOpenPlayer(record.id)
+                                        RecordStatus.DONE -> {
+                                            if (viewModel.isFileDeleted(record)) {
+                                                fileDeletedRecord = record
+                                            } else {
+                                                onOpenPlayer(record.id)
+                                            }
+                                        }
                                         RecordStatus.READY,
                                         RecordStatus.PARSING,
                                         RecordStatus.FAILED,
@@ -194,10 +202,35 @@ fun HomeScreen(
                                 },
                                 viewModel = viewModel,
                             )
-                        }
-                    }
+}
+        }
+    }
+
+    // 本地文件被删除时弹窗：可重新下载或删除记录
+    fileDeletedRecord?.let { rec ->
+        AlertDialog(
+            onDismissRequest = { fileDeletedRecord = null },
+            title = { Text("文件已删除") },
+            text = { Text("该视频的本地文件已被删除，无法播放。要重新下载还是删除记录？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.reprepareDownload(rec)
+                    fileDeletedRecord = null
+                }) {
+                    Text("重新下载")
                 }
-            }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.deleteRecord(rec)
+                    fileDeletedRecord = null
+                }) {
+                    Text("删除记录")
+                }
+            },
+        )
+    }
+}
         }
     }
 }

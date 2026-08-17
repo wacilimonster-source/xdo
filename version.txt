@@ -1,6 +1,6 @@
 {
-  "versionCode": 18,
-  "versionName": "0.2.7",
-  "updateMessage": "图标不再套用系统蒙版裁切：移除自适应图标，改用原图直接作为启动图标（等比缩放、完整显示，不裁剪）。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.7.apk"
+  "versionCode": 19,
+  "versionName": "0.2.8",
+  "updateMessage": "修复已下载任务状态异常变成「网络超时」：自动回填不再重解析已完成记录；新增本地文件删除检测，进入时提示可重新下载。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.8.apk"
 }

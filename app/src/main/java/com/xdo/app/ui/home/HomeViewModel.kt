@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import java.io.File
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.xdo.app.AppEvents
@@ -161,6 +162,38 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         AppHolder.downloadManager?.startDownload(record.id, force)
     }
 
+    /** 检查本地文件是否已被删除（返回 true 表示文件不存在） */
+    fun isFileDeleted(record: DownloadRecord): Boolean {
+        val uri = record.fileUri ?: return true
+        return try {
+            val u = Uri.parse(uri)
+            if (u.scheme == "file") {
+                !File(u.path!!).exists()
+            } else {
+                // content:// URI，通过 ContentResolver 检查
+                getApplication<Application>().contentResolver.openInputStream(u)?.close()
+                false
+            }
+        } catch (e: Exception) {
+            true
+        }
+    }
+
+    /** 文件被删后重新下载：把 DONE 状态重置，清除 fileUri，重新发起下载 */
+    fun reprepareDownload(record: DownloadRecord) {
+        viewModelScope.launch {
+            dao.upsert(record.copy(
+                status = RecordStatus.READY,
+                fileUri = null,
+                fileSize = null,
+                progress = 0,
+                errorMsg = null,
+                completedAt = null,
+            ))
+            AppHolder.downloadManager?.startDownload(record.id, false)
+        }
+    }
+
     fun deleteRecord(record: DownloadRecord) {
         AppHolder.downloadManager?.deleteRecord(record.id)
     }
@@ -225,7 +258,7 @@ fun decodeVariants(json: String): List<com.xdo.app.data.QualityOption> {
     return list
 }
 
-/** 是否缺少标题或封面，需要静默回填解析 */
+/** 是否缺少标题或封面，需要静默回填解析（DONE 记录不参与：已下载完成不应重新解析） */
 private fun DownloadRecord.needsMetaBackfill(): Boolean =
     (text.isBlank() || posterUrl.isNullOrBlank()) &&
-        (status == RecordStatus.READY || status == RecordStatus.DONE || status == RecordStatus.FAILED)
+        (status == RecordStatus.READY || status == RecordStatus.FAILED)
