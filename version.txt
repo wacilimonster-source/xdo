@@ -1,6 +1,6 @@
 {
-  "versionCode": 21,
-  "versionName": "0.2.10",
-  "updateMessage": "修复 v0.2.9 复测遗留问题：通知栏取消后常驻「准备下载」通知、旧记录 HLS 缺少音轨信息仍会下载无声视频、Android 8/9 相册不显示、HLS 保存失败重试整段重下、多任务下载无取消按钮、重复解析并发。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.10.apk"
+  "versionCode": 22,
+  "versionName": "0.2.11",
+  "updateMessage": "修复 v0.2.9/v0.2.10 签名与老版本不一致导致无法覆盖安装的问题（恢复 v0.2.8 及更早版本的历史签名密钥）；功能与 v0.2.10 相同。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.11.apk"
 }

@@ -1,4 +1,6 @@
 // X 下载助手 xdo · app 模块构建脚本
+import java.io.File
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -14,14 +16,34 @@ android {
         minSdk = 26
         targetSdk = 34
         // 发布新版本时同步修改；version.txt 的 versionCode 必须 >= 此值（判更新唯一依据）
-        versionCode = 21
-        versionName = "0.2.10"
+        versionCode = 22
+        versionName = "0.2.11"
+    }
+
+    // 发版签名：必须继续使用 v0.2.8 及更早版本的历史密钥，否则老用户会因签名不同无法覆盖安装。
+    // 密钥不入库，固定放在 ~/.android/xdo-release.keystore（alias=androiddebugkey，密码=android）。
+    // 注意：v0.2.9/v0.2.10 误用了当前机器的新 debug 密钥，导致从 v0.2.8 升级失败；v0.2.11 起恢复。
+    val stableKeystore = File(System.getProperty("user.home"), ".android/xdo-release.keystore")
+    signingConfigs {
+        if (stableKeystore.exists()) {
+            create("releaseStable") {
+                storeFile = stableKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
+        }
     }
 
     buildTypes {
         release {
-            // 发布版使用 debug 签名，方便用户直接安装测试
-            signingConfig = signingConfigs.getByName("debug")
+            // 发布版使用与历史版本一致的密钥签名，保证可以覆盖安装
+            signingConfig = if (stableKeystore.exists()) {
+                signingConfigs.getByName("releaseStable")
+            } else {
+                // 兜底：没有历史密钥时退回 debug 签名（会与老版本不一致，仅用于本机构建）
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
