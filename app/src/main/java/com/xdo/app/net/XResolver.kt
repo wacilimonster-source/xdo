@@ -29,13 +29,24 @@ object XResolver {
 
     // 代理/境外网络下，复用坏连接或服务器「半开」连接会导致 read 永远等不到 EOF。
     // retryOnConnectionFailure(false) 避免把坏连接重试复用；timeout 兜底。
+    // B16：callTimeout 是「单次调用总时长」硬上限，阻塞 execute() 也会被 OkHttp 自身掐断，
+    // 不再依赖协程 withTimeout（它无法中断阻塞调用）。
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(9, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
         .followRedirects(true)
         .followSslRedirects(true)
+        .build()
+
+    /** HLS 变体播放列表专用短超时客户端 */
+    private val hlsClient = OkHttpClient.Builder()
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(4, TimeUnit.SECONDS)
+        .callTimeout(4, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
         .build()
 
     private val UA =
@@ -70,9 +81,11 @@ object XResolver {
      */
     suspend fun resolve(tweetId: String): ResolveResult =
         withContext(Dispatchers.IO) {
+            // B16：真实截止时间。HLS 变体解析前检查剩余预算，超预算直接跳过（兜底单选项）
+            val deadline = System.currentTimeMillis() + HARD_TIMEOUT_MS
             try {
-                withTimeout(HARD_TIMEOUT_MS) {
-                    val primary = fetchSyndication(tweetId)
+                withTimeout(HARD_TIMEOUT_MS + 4_000L) {
+                    val primary = fetchSyndication(tweetId, deadline)
                     when (primary) {
                         is PrimaryResult.Ok -> return@withTimeout primary.r
                         is PrimaryResult.NoVideo -> {
@@ -97,7 +110,7 @@ object XResolver {
         }
 
     /** 主通道：X syndication。tombstone/error/HTTP 失败返回 Blocked（交给备用通道） */
-    private suspend fun fetchSyndication(tweetId: String): PrimaryResult {
+    private suspend fun fetchSyndication(tweetId: String, deadline: Long): PrimaryResult {
         try {
             val url = SYNDICATION_URL.format(tweetId, (10000..99999).random())
             val req = Request.Builder().url(url)
@@ -113,13 +126,24 @@ object XResolver {
                 if (json.has("error")) return PrimaryResult.Blocked
                 // X 对匿名/受限访问返回 {"__typename":"Tweet","tombstone":{}}，不含内容。
                 if (json.has("tombstone")) return PrimaryResult.Blocked
+                // B17：errors 数组（{"errors":[...]}）等异常结构也是被拦截，不是「无视频」
+                if (json.has("errors")) return PrimaryResult.Blocked
+                val typename = json.optString("__typename", "")
+                if (typename.isNotBlank() && !typename.equals("tweet", ignoreCase = true)) {
+                    return PrimaryResult.Blocked
+                }
                 val video = json.optJSONObject("video")
-                    ?: return PrimaryResult.NoVideo
+                if (video == null) {
+                    // 只有确认为正常 Tweet 结构（有 text/user 字段）才判定「确实无视频」；
+                    // 其余异常结构（TweetUnavailable、空对象等）视为被拦截 → 走备用通道
+                    val hasTweetShape = json.has("text") || json.has("user")
+                    return if (hasTweetShape) PrimaryResult.NoVideo else PrimaryResult.Blocked
+                }
                 val posterUrl = video.optString("poster").takeIf { it.isNotBlank() }
                 val durationMs = video.optLong("durationMs").takeIf { it > 0 }
                 val variants = video.optJSONArray("variants")
-                    ?: return PrimaryResult.NoVideo
-                val qualities = parseVariants(variants)
+                    ?: return PrimaryResult.Blocked // video 对象存在但无 variants：结构异常，交备用通道
+                val qualities = parseVariants(variants, deadline)
                 if (qualities.isEmpty()) return PrimaryResult.NoVideo
                 val user = json.optJSONObject("user")
                 return PrimaryResult.Ok(
@@ -157,7 +181,8 @@ object XResolver {
                 val req = Request.Builder().url(url)
                     .header("User-Agent", UA)
                     .build()
-                client.newCall(req).execute().use { resp ->
+                // 用短超时客户端（callTimeout 4s），阻塞调用也受硬限制，不会拖穿 withTimeout
+                hlsClient.newCall(req).execute().use { resp ->
                     if (!resp.isSuccessful) return@use FxtOutcome.Unavailable
                     val text = safeRead(resp.body ?: return@use FxtOutcome.Unavailable)
                     val json = JSONObject(text)
@@ -171,7 +196,7 @@ object XResolver {
                     val v = videos.getJSONObject(0)
                     val videoUrl = v.optString("url")
                     if (videoUrl.isBlank()) return@use FxtOutcome.Unavailable
-                    val isHls = videoUrl.endsWith(".m3u8", ignoreCase = true)
+                    val isHls = isHlsUrl(videoUrl)
                     val author = tweet.optJSONObject("author")
                     FxtOutcome.Found(
                         ResolveResult.Success(
@@ -226,7 +251,7 @@ object XResolver {
         ""
     }
 
-    private fun parseVariants(variants: JSONArray): List<QualityOption> {
+    private fun parseVariants(variants: JSONArray, deadline: Long): List<QualityOption> {
         val list = ArrayList<QualityOption>(variants.length() * 2)
         val seen = HashSet<String>()
         for (i in 0 until variants.length()) {
@@ -251,7 +276,7 @@ object XResolver {
                 }
                 // HLS 流：长视频（如 7 分钟）X 只提供 m3u8 分片流，需分片下载后合成。
                 // 直接下载 m3u8 当单文件会得到「只播前面一段」的损坏文件。
-                "application/x-mpegURL" -> list.addAll(parseHlsVariants(url))
+                "application/x-mpegURL" -> list.addAll(parseHlsVariants(url, deadline))
             }
         }
         // 按分辨率（宽高积）降序，码率作次级排序；
@@ -265,36 +290,40 @@ object XResolver {
 
     /**
      * 解析 HLS 主播放列表，为其中每个清晰度生成一项（带 isHls=true）。
-     * 解析失败则兜底返回单个「HLS 流」选项，保证仍可下载。
+     * B01：同时解析 #EXT-X-MEDIA 音频播放列表，把音频轨 URL 挂到每个清晰度选项上，
+     * 否则 HlsDownloader 只下载视频轨 → 下载出的视频没有声音。
+     * 解析失败则兜底返回单个「HLS 流」选项（master 本身含音频引用），保证仍可下载。
      */
-    private fun parseHlsVariants(masterUrl: String): List<QualityOption> {
-        // HLS 子请求独立短超时，且失败兜底为单个「HLS 流」选项，绝不拖死主解析
-        return runCatching {
-            val call = Request.Builder().url(masterUrl)
+    private fun parseHlsVariants(masterUrl: String, deadline: Long): List<QualityOption> {
+        // B16：剩余解析预算不足时不发请求，直接兜底（HlsDownloader 拿 master 也能正确处理音频）
+        if (System.currentTimeMillis() >= deadline - 800) return fallbackHlsOption(masterUrl)
+        val body = runCatching {
+            val req = Request.Builder().url(masterUrl)
                 .header("User-Agent", UA)
                 .build()
-                .let { client.newCall(it) }
-            // 5s 硬超时，避免代理下 m3u8 拉取卡死
-            val resp = kotlinx.coroutines.runBlocking {
-                withTimeout(5000) { call.execute() }
-            }
-            resp.use {
-                if (!it.isSuccessful) return@runCatching null
-                it.body?.let { b -> safeRead(b) }
+            // callTimeout(4s) 硬限制，阻塞 execute() 也会被掐断；失败兜底为单个「HLS 流」选项
+            hlsClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) null
+                else resp.body?.let { safeRead(it) }
             }
         }.getOrNull()
-            ?.let { parseMasterPlaylist(it, masterUrl) }
-            ?: listOf(
-                QualityOption(
-                    label = "HLS 流",
-                    width = 0, height = 0, bitrateKbps = 0,
-                    url = masterUrl, isHls = true,
-                )
-            )
+        return body?.let { parseMasterPlaylist(it, masterUrl) } ?: fallbackHlsOption(masterUrl)
     }
 
-    /** 解析 HLS 主播放列表（含 #EXT-X-STREAM-INF），返回各清晰度选项；若已是媒体播放列表则回退单选项 */
-    private fun parseMasterPlaylist(body: String, masterUrl: String): List<QualityOption> {
+    private fun fallbackHlsOption(masterUrl: String): List<QualityOption> =
+        listOf(
+            QualityOption(
+                label = "HLS 流",
+                width = 0, height = 0, bitrateKbps = 0,
+                url = masterUrl, isHls = true,
+            )
+        )
+
+    /**
+     * 解析 HLS 主播放列表（含 #EXT-X-STREAM-INF），返回各清晰度选项（每个都带音频轨 URL）；
+     * 若已是媒体播放列表则回退单选项。
+     */
+    fun parseMasterPlaylist(body: String, masterUrl: String): List<QualityOption> {
         val lines = body.split("\n").map { it.trim() }
         if (!lines.any { it.startsWith("#EXT-X-STREAM-INF") }) {
             // 已是媒体播放列表：取一个通用 HLS 选项
@@ -308,11 +337,16 @@ object XResolver {
                 )
             )
         }
+        // B01：收集音频播放列表（#EXT-X-MEDIA:TYPE=AUDIO），选最高码率那条挂给每个清晰度
+        val audioUrls = ArrayList<String>()
         val out = ArrayList<QualityOption>()
         var i = 0
         while (i < lines.size) {
             val line = lines[i]
-            if (line.startsWith("#EXT-X-STREAM-INF")) {
+            if (line.startsWith("#EXT-X-MEDIA") && line.contains("TYPE=AUDIO", ignoreCase = true)) {
+                Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
+                    ?.let { audioUrls.add(resolveUri(masterUrl, it)) }
+            } else if (line.startsWith("#EXT-X-STREAM-INF")) {
                 val res = Regex("""RESOLUTION=(\d{3,4})x(\d{3,4})""").find(line)
                 val bw = Regex("""BANDWIDTH=(\d+)""").find(line)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 // URI 可能在下一行（绝对或相对）
@@ -338,10 +372,21 @@ object XResolver {
             }
             i++
         }
+        val audio = bestAudioPlaylist(audioUrls)
         return out.ifEmpty {
             listOf(QualityOption("HLS 流", 0, 0, 0, masterUrl, isHls = true))
-        }
+        }.map { it.copy(audioUrl = audio) }
     }
+
+    /** 选最高码率的音频播放列表（URL 里的 audio-<数字> 越大码率越高） */
+    fun bestAudioPlaylist(audioUrls: List<String>): String? =
+        audioUrls.maxByOrNull { url ->
+            Regex("""audio-(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        }
+
+    /** m3u8 判定要剥掉查询参数/锚点（B23：带 ?tag= 的 m3u8 会被误当 MP4） */
+    fun isHlsUrl(url: String): Boolean =
+        url.substringBefore('?').substringBefore('#').endsWith(".m3u8", ignoreCase = true)
 
     private fun tierLabel(w: Int, h: Int): String = when (minOf(w, h)) {
         in 1440..Int.MAX_VALUE -> "1440p"
@@ -353,7 +398,7 @@ object XResolver {
     }
 
     /** 将播放列表中的相对/根相对 URI 解析为绝对 URL */
-    private fun resolveUri(base: String, uri: String): String {
+    fun resolveUri(base: String, uri: String): String {
         if (uri.startsWith("http://") || uri.startsWith("https://")) return uri
         if (uri.startsWith("/")) {
             val m = Regex("""(https?://[^/]+)""").find(base)

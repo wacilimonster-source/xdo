@@ -39,13 +39,17 @@ fun AppRoot(onOpenSettings: () -> Unit = {}) {
         UpdateManager.autoCheck()
     }
     val updateState by UpdateManager.state.collectAsState()
-
-    val updateInfo = (updateState as? UpdateState.Available)?.info
-    updateInfo?.let { info ->
+    // B07：持有最近一次「发现新版本」的 info，Downloading/DownloadFailed 状态弹窗不消失
+    val lastUpdateInfo by UpdateManager.lastAvailable.collectAsState()
+    val updateInfo = (updateState as? UpdateState.Available)?.info ?: lastUpdateInfo
+    val showUpdateDialog = updateState is UpdateState.Available ||
+        updateState is UpdateState.Downloading ||
+        updateState is UpdateState.DownloadFailed
+    if (showUpdateDialog && updateInfo != null) {
         UpdateDialog(
-            info = info,
+            info = updateInfo,
             state = updateState,
-            onDownload = { UpdateManager.downloadAndInstall(info) },
+            onDownload = { UpdateManager.downloadAndInstall(updateInfo) },
             onDismiss = { UpdateManager.reset() },
         )
     }

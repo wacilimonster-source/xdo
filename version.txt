@@ -1,6 +1,6 @@
 {
-  "versionCode": 19,
-  "versionName": "0.2.8",
-  "updateMessage": "修复已下载任务状态异常变成「网络超时」：自动回填不再重解析已完成记录；新增本地文件删除检测，进入时提示可重新下载。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.8.apk"
+  "versionCode": 20,
+  "versionName": "0.2.9",
+  "updateMessage": "修复 36 项问题：HLS 下载无声音（默认清晰度）、重复分享重置记录状态、重新解析按钮无效、换清晰度续产出损坏视频、Android 8/9 无法保存、进程被杀后记录永久卡死等；下载进度/通知/更新弹窗多项体验修复，并新增单元测试。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.9.apk"
 }

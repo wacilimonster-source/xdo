@@ -14,8 +14,8 @@ android {
         minSdk = 26
         targetSdk = 34
         // 发布新版本时同步修改；version.txt 的 versionCode 必须 >= 此值（判更新唯一依据）
-        versionCode = 19
-        versionName = "0.2.8"
+        versionCode = 20
+        versionName = "0.2.9"
     }
 
     buildTypes {
@@ -81,6 +81,9 @@ dependencies {
 
     // 图片加载
     implementation(libs.coil.compose)
+
+    // 单元测试（B36：TweetLink / 播放列表解析 / 文件名等纯逻辑覆盖）
+    testImplementation("junit:junit:4.13.2")
 
     debugImplementation(libs.androidx.ui.tooling)
 }

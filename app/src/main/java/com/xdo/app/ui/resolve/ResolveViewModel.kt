@@ -8,7 +8,7 @@ import com.xdo.app.data.DownloadRecord
 import com.xdo.app.data.QualityOption
 import com.xdo.app.data.RecordStatus
 import com.xdo.app.dl.AppPrefsHolder
-import com.xdo.app.ui.home.decodeVariants
+import com.xdo.app.data.VariantsJson
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,7 +52,7 @@ class ResolveViewModel(app: Application) : AndroidViewModel(app) {
         watchJob = viewModelScope.launch {
             dao.observeById(recordId).collectLatest { rec ->
                 _record.value = rec
-                val qs = decodeVariants(rec?.variantsJson ?: "")
+                val qs = VariantsJson.decode(rec?.variantsJson ?: "")
                 _qualities.value = qs
                 if (rec == null) return@collectLatest
                 _downloading.value = rec.status == RecordStatus.DOWNLOADING
@@ -94,11 +94,10 @@ class ResolveViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 重新解析（解析失败时使用） */
+    /** 重新解析（解析失败时使用）。B03：执行真实解析并写回，DB Flow 会自动刷新 UI */
     fun resolveAgain(recordId: Long) {
         viewModelScope.launch {
-            val rec = dao.getById(recordId) ?: return@launch
-            dao.upsert(rec.copy(status = RecordStatus.PARSING, errorMsg = null))
+            com.xdo.app.net.RecordResolver.resolveAndApply(dao, recordId)
             _downloading.value = false
         }
     }

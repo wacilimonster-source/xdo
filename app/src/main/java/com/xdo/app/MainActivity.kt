@@ -19,6 +19,11 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { }
 
+    /** B05：Android 8/9 保存到公共相册需要运行时申请写权限（Manifest 只声明不够） */
+    private val legacyStoragePermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -28,7 +33,12 @@ class MainActivity : ComponentActivity() {
             }
         }
         requestNotifPermissionIfNeeded()
-        handleIntent(intent)
+        requestLegacyStorageIfNeeded()
+        // B22：仅冷启动处理一次分享 Intent；旋转/配置变化重建时（savedInstanceState != null）
+        // 不再重复处理，setIntent 保留的原 SEND intent 不会二次触发解析
+        if (savedInstanceState == null) {
+            handleIntent(intent)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -55,6 +65,17 @@ class MainActivity : ComponentActivity() {
             ) == PackageManager.PERMISSION_GRANTED
             if (!granted) {
                 notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    private fun requestLegacyStorageIfNeeded() {
+        if (Build.VERSION.SDK_INT <= 28) {
+            val granted = ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                legacyStoragePermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         }
     }

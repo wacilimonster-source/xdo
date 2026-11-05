@@ -267,11 +267,22 @@ private fun Hero(
                 )
             }
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    "@$handle",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "@$handle",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // B34：展示视频时长（之前参数未使用）
+                    durationMs?.takeIf { it > 0 }?.let { ms ->
+                        Text(
+                            formatDuration(ms),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.outline,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text.ifBlank { authorName },
@@ -282,4 +293,12 @@ private fun Hero(
             }
         }
     }
+}
+
+private fun formatDuration(ms: Long): String {
+    val totalSec = ms / 1000
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
 }

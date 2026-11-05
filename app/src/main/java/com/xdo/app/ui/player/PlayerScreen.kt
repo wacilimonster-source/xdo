@@ -42,9 +42,13 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.xdo.app.XDoApp
+import kotlinx.coroutines.launch
+import androidx.compose.material3.MaterialTheme
 
 /** 沉浸式全屏播放：状态栏/导航栏隐藏，视频占满整个屏幕，控制器用播放器自带的 */
 @Composable
@@ -56,6 +60,7 @@ fun PlayerScreen(recordId: Long, onBack: () -> Unit) {
     var fileUri by remember { mutableStateOf<String?>(null) }
     var recordTitle by remember { mutableStateOf("") }
     var tweetId by remember { mutableStateOf<String?>(null) }
+    var playError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(recordId) {
         val rec = dao.getById(recordId)
@@ -66,6 +71,17 @@ fun PlayerScreen(recordId: Long, onBack: () -> Unit) {
 
     val player = remember {
         ExoPlayer.Builder(context).build()
+    }
+
+    // B31：播放错误（文件被删/解码失败）不再黑屏，给出明确提示
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                playError = "视频无法播放，文件可能已损坏或被系统清理"
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
     }
 
     // 加载 + 恢复断点
@@ -90,10 +106,12 @@ fun PlayerScreen(recordId: Long, onBack: () -> Unit) {
         }
         onDispose {
             controller?.show(WindowInsetsCompat.Type.systemBars())
-            player.currentPosition.takeIf { it > 0 }?.let { pos ->
-                kotlinx.coroutines.runBlocking {
-                    val cur = dao.getById(recordId) ?: return@runBlocking
-                    dao.upsert(cur.copy(positionMs = pos))
+            // B31：断点写入改走应用级后台作用域（定向 UPDATE，不整行 REPLACE），
+            // 不再在主线程 runBlocking 阻塞退出动画
+            val pos = player.currentPosition
+            if (pos > 0) {
+                app.appScope.launch {
+                    runCatching { dao.updatePosition(recordId, pos) }
                 }
             }
             player.release()
@@ -117,6 +135,20 @@ fun PlayerScreen(recordId: Long, onBack: () -> Unit) {
             },
             modifier = Modifier.fillMaxSize(),
         )
+
+        // B31：播放失败时给出可读的错误提示，不再黑屏
+        playError?.let { msg ->
+            Text(
+                msg,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0x99000000))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            )
+        }
 
         // 顶部悬浮操作条（半透明，不挡视频）
         Row(

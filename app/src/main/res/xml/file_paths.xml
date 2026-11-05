@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <!-- 下载中的临时文件（/data/data/pkg/cache/xdo/） -->
+    <!-- 下载中的临时文件（/data/data/pkg/cache/xdo/）与更新 APK（cache/xdo/） -->
     <cache-path
         name="xdo_cache"
         path="xdo/" />
-    <!-- 低版本系统的兜底保存目录 -->
+    <!-- 低版本系统的兜底保存目录（内部 filesDir/downloads） -->
     <files-path
         name="xdo_files"
         path="downloads/" />
+    <!-- B05：低版本系统兜底保存目录（外部存储 getExternalFilesDir/downloads），
+         之前缺失导致 FileProvider 抛 "Failed to find configured root" -->
+    <external-files-path
+        name="xdo_ext_files"
+        path="downloads/" />
+    <!-- B05：低版本有写权限时保存到公共 Movies/X下载助手/，也用 FileProvider 暴露 -->
+    <external-path
+        name="xdo_movies"
+        path="Movies/X下载助手/" />
 </paths>

@@ -13,9 +13,9 @@ import com.xdo.app.XDoApp
 import com.xdo.app.data.DownloadRecord
 import com.xdo.app.data.RecordStatus
 import com.xdo.app.dl.AppHolder
-import com.xdo.app.net.ResolveResult
-import com.xdo.app.net.XResolver
+import com.xdo.app.net.RecordResolver
 import com.xdo.app.util.TweetLink
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,8 +23,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -42,6 +43,12 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private val _clipboardLink = MutableStateFlow<String?>(null)
     val clipboardLink: StateFlow<String?> = _clipboardLink
 
+    /** B27：查重+插入的互斥锁，防止并发分享同一新链接插入重复记录 */
+    private val shareMutex = Mutex()
+
+    /** 同一记录的去重解析（B27/防抖：解析进行中不再重复发起） */
+    private val resolvingIds = HashSet<Long>()
+
     fun clearPending() {
         _pendingResolve.value = null
     }
@@ -55,7 +62,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             records.first { list ->
                 list.firstOrNull { it.needsMetaBackfill() }?.let { rec ->
-                    resolve(rec)
+                    resolve(rec.id)
                     true
                 } ?: false
             }
@@ -84,32 +91,51 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val canonicalUrl = "https://x.com/i/status/$tweetId"
-            var record = dao.findBySourceUrl(canonicalUrl)
-            if (record == null) {
-                record = DownloadRecord(
-                    sourceUrl = canonicalUrl,
-                    tweetId = tweetId,
-                    authorName = "",
-                    handle = "",
-                    text = "",
-                    posterUrl = null,
-                    durationMs = null,
-                    variantsJson = "[]",
-                    chosenLabel = null,
-                    chosenUrl = null,
-                    status = RecordStatus.PARSING,
-                    progress = 0,
-                    fileUri = null,
-                    fileSize = null,
-                    errorMsg = null,
-                    positionMs = 0,
-                    createdAt = System.currentTimeMillis(),
-                    completedAt = null,
-                )
-                record = record.copy(id = dao.upsert(record))
+            // B27：查重与插入互斥，两个协程不会同时查到 null
+            val (record, existed) = shareMutex.withLock {
+                val existing = dao.findBySourceUrl(canonicalUrl)
+                if (existing != null) {
+                    existing to true
+                } else {
+                    var rec = DownloadRecord(
+                        sourceUrl = canonicalUrl,
+                        tweetId = tweetId,
+                        authorName = "",
+                        handle = "",
+                        text = "",
+                        posterUrl = null,
+                        durationMs = null,
+                        variantsJson = "[]",
+                        chosenLabel = null,
+                        chosenUrl = null,
+                        status = RecordStatus.PARSING,
+                        progress = 0,
+                        fileUri = null,
+                        fileSize = null,
+                        errorMsg = null,
+                        positionMs = 0,
+                        createdAt = System.currentTimeMillis(),
+                        completedAt = null,
+                    )
+                    rec = rec.copy(id = dao.upsert(rec))
+                    rec to false
+                }
             }
-            _pendingResolve.value = record.id
-            resolve(record)
+            when {
+                // B02：已完成的记录不再重新解析/重置状态（旧逻辑会把 DONE 打回 READY 并引发重复下载）
+                existed && record.status == RecordStatus.DONE ->
+                    _snack.emit("该视频已下载过，可在记录中查看")
+                existed && record.status == RecordStatus.DOWNLOADING ->
+                    _snack.emit("该视频正在下载中")
+                existed && record.status == RecordStatus.PAUSED ->
+                    _snack.emit("该视频已暂停，可在记录中继续")
+                // PARSING：解析已在进行（或启动对账后待重试），只导航不重复发起
+                existed && record.status == RecordStatus.PARSING -> _pendingResolve.value = record.id
+                else -> {
+                    _pendingResolve.value = record.id
+                    resolve(record.id)
+                }
+            }
         }
     }
 
@@ -118,36 +144,24 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         onShare(text)
     }
 
-    /** 解析推文元数据（幂等：并发保护由调用方保证） */
-    fun resolve(record: DownloadRecord) {
+    /**
+     * 解析推文元数据（B02/B12：统一走 RecordResolver，只更新元数据字段，
+     * 不覆盖 DONE/DOWNLOADING/PAUSED，不复活已删除记录；同记录去重防并发）。
+     */
+    fun resolve(recordId: Long) {
+        val acquired = synchronized(resolvingIds) { resolvingIds.add(recordId) }
+        if (!acquired) return
         viewModelScope.launch {
-            dao.upsert(record.copy(status = RecordStatus.PARSING, errorMsg = null))
-            val result = XResolver.resolve(record.tweetId)
-            when (result) {
-                is ResolveResult.Success -> {
-                    dao.upsert(record.copy(
-                        status = RecordStatus.READY,
-                        authorName = result.authorName,
-                        handle = result.handle,
-                        text = result.text,
-                        posterUrl = result.posterUrl,
-                        durationMs = result.durationMs,
-                        variantsJson = encodeVariants(result.qualities),
-                        errorMsg = null,
-                    ))
-                }
-                is ResolveResult.Failure -> {
-                    dao.upsert(record.copy(
-                        status = RecordStatus.FAILED,
-                        errorMsg = result.message,
-                    ))
-                }
+            try {
+                RecordResolver.resolveAndApply(dao, recordId)
+            } finally {
+                synchronized(resolvingIds) { resolvingIds.remove(recordId) }
             }
         }
     }
 
     fun retryResolve(record: DownloadRecord) {
-        resolve(record)
+        resolve(record.id)
     }
 
     fun cancel(record: DownloadRecord) {
@@ -162,8 +176,15 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         AppHolder.downloadManager?.startDownload(record.id, force)
     }
 
-    /** 检查本地文件是否已被删除（返回 true 表示文件不存在） */
-    fun isFileDeleted(record: DownloadRecord): Boolean {
+    /** B26：文件检查移到 IO 线程（主线程做 ContentResolver I/O 会卡顿） */
+    fun isFileDeletedAsync(record: DownloadRecord, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val deleted = checkFileDeleted(record)
+            withContext(Dispatchers.Main) { onResult(deleted) }
+        }
+    }
+
+    private fun checkFileDeleted(record: DownloadRecord): Boolean {
         val uri = record.fileUri ?: return true
         return try {
             val u = Uri.parse(uri)
@@ -222,43 +243,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
         context.startActivity(chooser)
     }
-
-    private fun encodeVariants(qualities: List<com.xdo.app.data.QualityOption>): String {
-        val arr = JSONArray()
-        qualities.forEach { q ->
-            arr.put(JSONObject().apply {
-                put("label", q.label)
-                put("url", q.url)
-                put("bitrate", q.bitrateKbps)
-                put("isHls", q.isHls)
-            })
-        }
-        return arr.toString()
-    }
 }
 
-fun decodeVariants(json: String): List<com.xdo.app.data.QualityOption> {
-    val list = ArrayList<com.xdo.app.data.QualityOption>()
-    runCatching {
-        val arr = JSONArray(json)
-        for (i in 0 until arr.length()) {
-            val o = arr.getJSONObject(i)
-            list.add(
-                com.xdo.app.data.QualityOption(
-                    label = o.getString("label"),
-                    width = 0,
-                    height = 0,
-                    bitrateKbps = o.optInt("bitrate", 0),
-                    url = o.getString("url"),
-                    isHls = o.optBoolean("isHls", false),
-                )
-            )
-        }
-    }
-    return list
-}
-
-/** 是否缺少标题或封面，需要静默回填解析（DONE 记录不参与：已下载完成不应重新解析） */
+/** 是否缺少标题或封面需要静默回填（B30：FAILED 不参与，避免每次冷启动白白重解析一次；DONE 已排除） */
 private fun DownloadRecord.needsMetaBackfill(): Boolean =
-    (text.isBlank() || posterUrl.isNullOrBlank()) &&
-        (status == RecordStatus.READY || status == RecordStatus.FAILED)
+    (text.isBlank() || posterUrl.isNullOrBlank()) && status == RecordStatus.READY

@@ -77,9 +77,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
     }
 
-    // 更新弹窗
-    val updateInfo = (updateState as? UpdateState.Available)?.info
-    val updateProgress = (updateState as? UpdateState.Downloading)?.progress
+    // 更新弹窗由 AppRoot 统一展示（B07：Downloading/DownloadFailed 也保持弹窗），此处不再重复
 
     Scaffold(
         topBar = {

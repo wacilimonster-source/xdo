@@ -20,6 +20,8 @@ data class QualityOption(
     val url: String,
     /** true 表示 url 为 HLS(m3u8) 播放列表，需分片下载后合成 */
     val isHls: Boolean = false,
+    /** HLS 音频播放列表 URL（X 的 HLS 音视频分离；为空表示由下载器从 master 自行解析） */
+    val audioUrl: String? = null,
 )
 
 @Entity(tableName = "records")

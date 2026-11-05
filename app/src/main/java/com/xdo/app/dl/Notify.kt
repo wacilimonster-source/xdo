@@ -16,6 +16,9 @@ object Notify {
     const val CHANNEL_ID = "download"
     const val NOTIFICATION_ID = 1001
 
+    /** 完成/失败通知的独立 ID（B09：与前台通知分离，不会被 stopForeground 清掉） */
+    const val NOTIFICATION_ID_DONE = 1002
+
     fun ensureChannel(context: Context) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {

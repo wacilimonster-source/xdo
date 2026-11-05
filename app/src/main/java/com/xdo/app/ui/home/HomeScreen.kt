@@ -90,6 +90,9 @@ fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var search by remember { mutableStateOf("") }
     var fileDeletedRecord by remember { mutableStateOf<DownloadRecord?>(null) }
+    // B21：仅 WiFi 下点「继续」先确认是否使用流量
+    var confirmResume by remember { mutableStateOf<DownloadRecord?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     LaunchedEffect(Unit) {
         viewModel.checkClipboard()
@@ -141,7 +144,8 @@ fun HomeScreen(
                 )
             }
             if (filtered.isEmpty()) {
-                EmptyState()
+                // B33：区分「无记录」与「搜索无结果」
+                EmptyState(hasSearch = search.isNotBlank())
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -187,10 +191,10 @@ fun HomeScreen(
                                 onClick = {
                                     when (record.status) {
                                         RecordStatus.DONE -> {
-                                            if (viewModel.isFileDeleted(record)) {
-                                                fileDeletedRecord = record
-                                            } else {
-                                                onOpenPlayer(record.id)
+                                            // B26：文件检查移到后台线程，不再阻塞点击回调
+                                            viewModel.isFileDeletedAsync(record) { deleted ->
+                                                if (deleted) fileDeletedRecord = record
+                                                else onOpenPlayer(record.id)
                                             }
                                         }
                                         RecordStatus.READY,
@@ -199,6 +203,13 @@ fun HomeScreen(
                                         -> onOpenResolve(record.id)
                                         else -> Unit
                                     }
+                                },
+                                onContinueRequest = { rec ->
+                                    val needConfirm =
+                                        com.xdo.app.dl.AppPrefsHolder.get(context).wifiOnly &&
+                                            com.xdo.app.dl.AppUtil.isMetered(context)
+                                    if (needConfirm) confirmResume = rec
+                                    else viewModel.startOrResume(rec)
                                 },
                                 viewModel = viewModel,
                             )
@@ -227,6 +238,26 @@ fun HomeScreen(
                 }) {
                     Text("删除记录")
                 }
+            },
+        )
+    }
+
+    // B21：仅 WiFi 开启且当前为移动网络时，「继续」先确认是否消耗流量
+    confirmResume?.let { rec ->
+        AlertDialog(
+            onDismissRequest = { confirmResume = null },
+            title = { Text("使用移动网络下载？") },
+            text = { Text("当前为移动网络且已开启「仅 WiFi 下载」。是否使用流量继续下载？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmResume = null
+                    viewModel.startOrResume(rec, force = true)
+                }) {
+                    Text("继续下载")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmResume = null }) { Text("取消") }
             },
         )
     }
@@ -299,7 +330,7 @@ private fun ClipboardBanner(onClick: () -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun EmptyState() {
+private fun EmptyState(hasSearch: Boolean = false) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -314,16 +345,27 @@ private fun EmptyState() {
             tint = MaterialTheme.colorScheme.outline,
         )
         Spacer(Modifier.height(16.dp))
-        Text(
-            "还没有下载记录",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "去 X 里对视频点「分享」→ 选择本应用即可下载",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.outline,
-        )
+        if (hasSearch) {
+            // B33：搜索无结果 ≠ 没有记录
+            Text("没有匹配的记录", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "换个关键词试试",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        } else {
+            Text(
+                "还没有下载记录",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "去 X 里对视频点「分享」→ 选择本应用即可下载",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
     }
 }
 
@@ -332,6 +374,7 @@ private fun EmptyState() {
 private fun RecordCard(
     record: DownloadRecord,
     onClick: () -> Unit,
+    onContinueRequest: (DownloadRecord) -> Unit = { },
     viewModel: HomeViewModel,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -364,18 +407,22 @@ private fun RecordCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(4.dp))
+                // B34：未完成记录显示「添加于」，完成后才显示「下载于」
                 Text(
-                    "下载于 ${dateTimeLabel(record.completedAt ?: record.createdAt)}",
+                    if (record.status == RecordStatus.DONE)
+                        "下载于 ${dateTimeLabel(record.completedAt ?: record.createdAt)}"
+                    else
+                        "添加于 ${dateTimeLabel(record.createdAt)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(6.dp))
-                StatusRow(record, viewModel)
+                StatusRow(record, viewModel, onContinueRequest)
             }
             Spacer(Modifier.width(8.dp))
-            MoreMenu(record, viewModel, menuExpanded, { menuExpanded = it })
+            MoreMenu(record, viewModel, onContinueRequest, menuExpanded, { menuExpanded = it })
         }
     }
 }
@@ -410,7 +457,11 @@ private fun PosterPlaceholder() {
 }
 
 @Composable
-private fun StatusRow(record: DownloadRecord, viewModel: HomeViewModel) {
+private fun StatusRow(
+    record: DownloadRecord,
+    viewModel: HomeViewModel,
+    onContinueRequest: (DownloadRecord) -> Unit = { },
+) {
     when (record.status) {
         RecordStatus.PARSING -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -453,7 +504,7 @@ private fun StatusRow(record: DownloadRecord, viewModel: HomeViewModel) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.tertiary,
                 )
-                TextButton(onClick = { viewModel.startOrResume(record) }) {
+                TextButton(onClick = { onContinueRequest(record) }) {
                     Text("继续")
                 }
             }
@@ -485,6 +536,7 @@ private fun StatusRow(record: DownloadRecord, viewModel: HomeViewModel) {
 private fun MoreMenu(
     record: DownloadRecord,
     viewModel: HomeViewModel,
+    onContinueRequest: (DownloadRecord) -> Unit,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
 ) {
@@ -517,7 +569,7 @@ private fun MoreMenu(
                         text = { Text("继续下载") },
                         onClick = {
                             onExpandedChange(false)
-                            viewModel.startOrResume(record)
+                            onContinueRequest(record)
                         },
                         leadingIcon = { Icon(Icons.Filled.PlayArrow, null) },
                     )

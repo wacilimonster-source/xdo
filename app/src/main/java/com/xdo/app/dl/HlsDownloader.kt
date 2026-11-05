@@ -4,11 +4,17 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.util.Log
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * HLS(m3u8) 下载器。
@@ -16,6 +22,11 @@ import java.nio.ByteBuffer
  * X 的长视频（如 7 分钟）只提供 HLS 分片流：视频是 CMAF/fMP4（init 段 + 多个 .m4s 分片），
  * 且音视频分离（音频在独立的播放列表里）。直接把 m3u8 当单文件下载会得到「只播前面一段」的损坏文件。
  * 这里分片下载所有视频/音频分片，再用 MediaExtractor + MediaMuxer 合成一个带声 MP4。
+ *
+ * B01：音频播放列表 URL 现在由 XResolver 挂到 QualityOption.audioUrl 传进来；
+ *      传入的是媒体（子）播放列表时直接采用，避免丢音轨。
+ * B18：所有网络调用改为可取消的 enqueue + suspend，暂停/取消能立刻掐断在途请求；
+ *      每个分片前 ensureActive()，取消后不再继续耗流量。
  */
 object HlsDownloader {
 
@@ -27,13 +38,15 @@ object HlsDownloader {
      * @param client    复用下载器的 OkHttp（带超时）
      * @param tmpDir   缓存目录，用于存放中间文件
      * @param masterUrl 主播放列表或媒体播放列表 URL
-     * @param onProgress 0..100 进度回调
+     * @param audioUrl  音频播放列表 URL（传入媒体播放列表时必需；master 会自行解析音频，可为空）
+     * @param onProgress 0..100 进度回调（分片级）
      * @return 合成后的 MP4 文件；失败抛异常
      */
     suspend fun download(
         client: OkHttpClient,
         tmpDir: File,
         masterUrl: String,
+        audioUrl: String? = null,
         onProgress: (Int) -> Unit,
     ): File {
         tmpDir.mkdirs()
@@ -44,7 +57,10 @@ object HlsDownloader {
 
         // 1) 取主播放列表，选出最高清视频变体 + 音频变体
         val master = fetchText(client, masterUrl)
-        val (videoPlaylist, audioPlaylist) = pickPlaylists(master, masterUrl)
+        val isMaster = master.contains("#EXT-X-STREAM-INF")
+        val (videoPlaylist, audioFromMaster) = pickPlaylists(master, masterUrl)
+        // B01：master 自带音频就用 master 的；传入的是子播放列表则用调用方传来的音频 URL
+        val audioPlaylist = audioFromMaster ?: audioUrl?.takeIf { !isMaster }
 
         // 2) 解析视频媒体播放列表（init + 分片）
         val vMedia = fetchText(client, videoPlaylist)
@@ -73,15 +89,15 @@ object HlsDownloader {
             onProgress((done * 100 / total).coerceIn(0, 99))
         }
 
-        // 4) 下载视频分片
-        downloadConcat(client, vInit, vSegs, videoFile)
-        done += vSegs.size; tick()
+        // 4) 下载视频分片（每个分片回调一次进度）
+        downloadConcat(client, vInit, vSegs, videoFile) { done++; tick() }
 
         // 5) 下载音频分片
         if (aSegs.isNotEmpty()) {
-            downloadConcat(client, aInit, aSegs, audioFile)
+            downloadConcat(client, aInit, aSegs, audioFile) { done++; tick() }
+        } else {
+            done += aSegs.size; tick()
         }
-        done += aSegs.size; tick()
 
         // 6) 合成
         val ok = mux(videoFile, if (aSegs.isNotEmpty()) audioFile else null, outFile)
@@ -97,7 +113,7 @@ object HlsDownloader {
     // ===== 播放列表解析 =====
 
     /** 从主播放列表选出视频播放列表与音频播放列表 URL */
-    private fun pickPlaylists(master: String, base: String): Pair<String, String?> {
+    internal fun pickPlaylists(master: String, base: String): Pair<String, String?> {
         val lines = master.split("\n").map { it.trim() }
         // 若没有 STREAM-INF，说明本身就是媒体播放列表
         if (!lines.any { it.startsWith("#EXT-X-STREAM-INF") }) {
@@ -122,7 +138,7 @@ object HlsDownloader {
                     bestBw = bw
                 }
             } else if (line.startsWith("#EXT-X-MEDIA")) {
-                if (line.contains("TYPE=AUDIO")) {
+                if (line.contains("TYPE=AUDIO", ignoreCase = true)) {
                     Regex("""URI="([^"]+)"""").find(line)?.groupValues?.get(1)
                         ?.let { audioUris.add(resolveUri(base, it)) }
                 }
@@ -137,7 +153,7 @@ object HlsDownloader {
     }
 
     /** 解析媒体播放列表，返回 (init 段 URI 或 null, 分片 URI 列表) */
-    private fun parseMediaPlaylist(body: String, base: String): Pair<String?, List<String>> {
+    internal fun parseMediaPlaylist(body: String, base: String): Pair<String?, List<String>> {
         val lines = body.split("\n").map { it.trim() }
         var init: String? = null
         val segs = ArrayList<String>()
@@ -169,7 +185,7 @@ object HlsDownloader {
         return init to segs
     }
 
-    private fun resolveUri(base: String, uri: String): String {
+    internal fun resolveUri(base: String, uri: String): String {
         if (uri.startsWith("http://") || uri.startsWith("https://")) return uri
         if (uri.startsWith("/")) {
             val m = Regex("""(https?://[^/]+)""").find(base)
@@ -181,36 +197,58 @@ object HlsDownloader {
 
     // ===== 下载 =====
 
-    private fun fetchText(client: OkHttpClient, url: String): String {
+    private suspend fun fetchText(client: OkHttpClient, url: String): String {
         val req = Request.Builder().url(url).header("User-Agent", UA).build()
-        client.newCall(req).execute().use { resp ->
+        callAwait(client, req).use { resp ->
             if (!resp.isSuccessful) throw IllegalStateException("播放列表获取失败 HTTP ${resp.code}")
             return resp.body?.string() ?: throw IllegalStateException("播放列表为空")
         }
     }
 
-    /** 下载 init 段（若有）后依次追加所有分片到同一文件 */
-    private fun downloadConcat(
+    /** 下载 init 段（若有）后依次追加所有分片到同一文件；每个分片完成后回调 onOne */
+    private suspend fun downloadConcat(
         client: OkHttpClient,
         init: String?,
         segs: List<String>,
         out: File,
+        onOne: () -> Unit = {},
     ) {
         FileOutputStream(out).use { fos ->
             init?.let { fos.write(fetchBytes(client, it)) }
             for (s in segs) {
+                currentCoroutineContext().ensureActive() // B18：取消/暂停立刻停止，不再耗流量
                 fos.write(fetchBytes(client, s))
+                onOne()
             }
         }
     }
 
-    private fun fetchBytes(client: OkHttpClient, url: String): ByteArray {
+    private suspend fun fetchBytes(client: OkHttpClient, url: String): ByteArray {
         val req = Request.Builder().url(url).header("User-Agent", UA).build()
-        client.newCall(req).execute().use { resp ->
+        callAwait(client, req).use { resp ->
             if (!resp.isSuccessful) throw IllegalStateException("分片下载失败 HTTP ${resp.code}")
             return resp.body?.bytes() ?: throw IllegalStateException("分片为空")
         }
     }
+
+    /**
+     * B18：用 enqueue + suspendCancellableCoroutine 替代阻塞 execute()，
+     * 协程被取消时调用 call.cancel() 立刻掐断在途请求。
+     */
+    private suspend fun callAwait(client: OkHttpClient, req: Request): okhttp3.Response =
+        suspendCancellableCoroutine { cont ->
+            val call = client.newCall(req)
+            cont.invokeOnCancellation { runCatching { call.cancel() } }
+            call.enqueue(object : okhttp3.Callback {
+                override fun onResponse(call: Call, response: okhttp3.Response) {
+                    if (cont.isActive) cont.resume(response)
+                }
+
+                override fun onFailure(call: Call, e: java.io.IOException) {
+                    if (cont.isActive) cont.resumeWithException(e)
+                }
+            })
+        }
 
     // ===== 合成（MediaExtractor + MediaMuxer） =====
 
