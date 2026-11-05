@@ -8,4 +8,5 @@
     <string name="notif_done">下载完成「%1$s」</string>
     <string name="notif_failed">下载失败「%1$s」</string>
     <string name="notif_action_cancel">取消</string>
+    <string name="notif_action_cancel_all">取消全部</string>
 </resources>

@@ -43,6 +43,9 @@ class ResolveViewModel(app: Application) : AndroidViewModel(app) {
 
     private var watchJob: Job? = null
 
+    /** R6：同一条记录只允许一个「重新解析」在跑，连点不会并发多次请求 */
+    private val resolvingIds = HashSet<Long>()
+
     fun consumeMessage() {
         _message.value = null
     }
@@ -96,9 +99,15 @@ class ResolveViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 重新解析（解析失败时使用）。B03：执行真实解析并写回，DB Flow 会自动刷新 UI */
     fun resolveAgain(recordId: Long) {
+        val acquired = synchronized(resolvingIds) { resolvingIds.add(recordId) }
+        if (!acquired) return
         viewModelScope.launch {
-            com.xdo.app.net.RecordResolver.resolveAndApply(dao, recordId)
-            _downloading.value = false
+            try {
+                com.xdo.app.net.RecordResolver.resolveAndApply(dao, recordId)
+            } finally {
+                synchronized(resolvingIds) { resolvingIds.remove(recordId) }
+                _downloading.value = false
+            }
         }
     }
 

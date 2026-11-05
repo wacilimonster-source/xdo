@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import com.xdo.app.R
 
 /**
  * 前台下载服务：仅在存在活跃下载任务时保活，负责通知呈现。
@@ -34,6 +35,10 @@ class DownloadService : Service() {
             ACTION_CANCEL -> {
                 val id = intent.getLongExtra(EXTRA_RECORD_ID, -1L)
                 AppHolder.downloadManager?.cancelDownload(id)
+                maybeStopSelf()
+            }
+            ACTION_CANCEL_ALL -> {
+                AppHolder.downloadManager?.cancelAllDownloads()
                 maybeStopSelf()
             }
             else -> {
@@ -81,18 +86,44 @@ class DownloadService : Service() {
 
     /** 按当前活跃任务快照重建前台通知（B08：取消按钮绑定真实 recordId） */
     private fun refresh() {
-        val items = AppHolder.downloadManager?.progressSnapshot().orEmpty()
+        val dm = AppHolder.downloadManager
+        val items = dm?.progressSnapshot().orEmpty()
+        // R1：没有任何活跃任务时，进度表里可能还残留已取消任务的条目。
+        // 此时绝不能 post 通知，直接移除通知并停服务。
+        if (dm == null || dm.isIdle()) {
+            // 若服务刚启动、尚未 startForeground，先满足 startForegroundService 的义务，
+            // 再立即移除通知（用户不可见），避免 ForegroundServiceDidNotStartInTime。
+            if (!foregroundStarted) {
+                ensureForeground(Notify.buildProgress(this, "准备下载", 0, null))
+            }
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         val notif = when {
             items.isEmpty() ->
                 Notify.buildProgress(this, "准备下载", 0, cancelAction(lastRecordId))
             items.size == 1 ->
                 Notify.buildProgress(this, items[0].second, items[0].third, cancelAction(items[0].first))
             else -> Notify.buildProgress(
-                this, "正在下载 ${items.size} 个视频",
-                items.map { it.third }.average().toInt().coerceIn(0, 99), null,
+                this, "${items.size} 个视频",
+                items.map { it.third }.average().toInt().coerceIn(0, 99),
+                cancelAllAction(),
+                cancelLabel = getString(R.string.notif_action_cancel_all),
             )
         }
         ensureForeground(notif)
+    }
+
+    /** R5：聚合通知的「取消全部」动作 */
+    private fun cancelAllAction(): PendingIntent {
+        val intent = Intent(this, DownloadService::class.java).apply {
+            action = ACTION_CANCEL_ALL
+        }
+        return PendingIntent.getService(
+            this, CANCEL_ALL_REQUEST_CODE, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun cancelAction(recordId: Long): PendingIntent {
@@ -107,7 +138,11 @@ class DownloadService : Service() {
     }
 
     private fun maybeStopSelf() {
-        if (AppHolder.downloadManager?.isIdle() != false) stopSelf()
+        if (AppHolder.downloadManager?.isIdle() != false) {
+            // R1：必须显式移除前台通知，光 stopSelf 在部分系统上会留下 ongoing 通知
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     // ==== 伴生：DownloadManager 调用 ====
@@ -115,7 +150,9 @@ class DownloadService : Service() {
     companion object {
         const val ACTION_START = "com.xdo.app.action.START"
         const val ACTION_CANCEL = "com.xdo.app.action.CANCEL"
+        const val ACTION_CANCEL_ALL = "com.xdo.app.action.CANCEL_ALL"
         const val EXTRA_RECORD_ID = "record_id"
+        private const val CANCEL_ALL_REQUEST_CODE = 424242
 
         @Volatile
         private var instance: DownloadService? = null

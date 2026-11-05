@@ -53,7 +53,20 @@ object HlsDownloader {
         val videoFile = File(tmpDir, "hls_video.mp4")
         val audioFile = File(tmpDir, "hls_audio.mp4")
         val outFile = File(tmpDir, "hls_muxed.mp4")
+        val sourceKeyFile = File(tmpDir, "hls_source.txt")
+        val sourceKey = "$masterUrl|${audioUrl.orEmpty()}"
+
+        // R4：MediaSaver 保存失败后重试时，直接复用上一次已合成好的 MP4，
+        // 不再把整段 HLS 重新下载一遍。sourceKey 防止换清晰度后误用旧产物。
+        if (outFile.exists() && outFile.length() > 0 && sourceKeyFile.exists() &&
+            runCatching { sourceKeyFile.readText() }.getOrNull() == sourceKey
+        ) {
+            onProgress(100)
+            return outFile
+        }
+
         listOf(videoFile, audioFile, outFile).forEach { it.delete() }
+        sourceKeyFile.delete()
 
         // 1) 取主播放列表，选出最高清视频变体 + 音频变体
         val master = fetchText(client, masterUrl)
@@ -107,6 +120,7 @@ object HlsDownloader {
             if (outFile.exists()) outFile.delete()
             videoFile.copyTo(outFile, overwrite = true)
         }
+        runCatching { sourceKeyFile.writeText(sourceKey) }
         return outFile
     }
 

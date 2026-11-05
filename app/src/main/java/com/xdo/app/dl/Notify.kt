@@ -31,7 +31,13 @@ object Notify {
         }
     }
 
-    fun buildProgress(context: Context, title: String, pct: Int, cancelPendingIntent: PendingIntent?): Notification {
+    fun buildProgress(
+        context: Context,
+        title: String,
+        pct: Int,
+        cancelPendingIntent: PendingIntent?,
+        cancelLabel: String = context.getString(R.string.notif_action_cancel),
+    ): Notification {
         ensureChannel(context)
         return NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
@@ -43,7 +49,7 @@ object Notify {
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .apply {
                 if (cancelPendingIntent != null) {
-                    addAction(0, context.getString(R.string.notif_action_cancel), cancelPendingIntent)
+                    addAction(0, cancelLabel, cancelPendingIntent)
                 }
             }
             .build()

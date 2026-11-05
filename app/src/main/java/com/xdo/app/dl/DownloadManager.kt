@@ -4,15 +4,18 @@ import android.content.Context
 import android.net.Uri
 import com.xdo.app.BuildConfig
 import com.xdo.app.data.DownloadRecord
+import com.xdo.app.data.QualityMatch
 import com.xdo.app.data.RecordDao
 import com.xdo.app.data.RecordStatus
 import com.xdo.app.data.VariantsJson
+import com.xdo.app.net.ResolveResult
 import com.xdo.app.net.XResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -133,6 +136,12 @@ class DownloadManager(
         }
     }
 
+    /** R5：聚合通知的「取消全部」 */
+    fun cancelAllDownloads() {
+        val ids = synchronized(jobs) { jobs.keys.toList() }
+        ids.forEach { cancelDownload(it) }
+    }
+
     fun pauseDownload(recordId: Long) {
         synchronized(jobs) { jobs.remove(recordId)?.cancel() }
         scope.launch {
@@ -188,11 +197,12 @@ class DownloadManager(
     // ==== 核心下载 ====
 
     private suspend fun runDownload(rec: DownloadRecord, force: Boolean) {
-        val url = rec.chosenUrl
-        if (url.isNullOrBlank()) {
+        val chosenUrl = rec.chosenUrl
+        if (chosenUrl.isNullOrBlank()) {
             setFailed(rec, "未获得下载地址，请重新解析")
             return
         }
+        var url: String = chosenUrl
         val title = rec.titleForNotif()
 
         // 仅 WiFi 开关：移动网络需手动确认（force=true 放行）
@@ -201,33 +211,59 @@ class DownloadManager(
             return
         }
 
-        dao.upsert(rec.copy(status = RecordStatus.DOWNLOADING, progress = 0, errorMsg = null))
-        notifyProgress(rec.id, title, 0)
-
-        val isHls = XResolver.isHlsUrl(url) // B23：剥掉查询参数再判定，带 ?tag= 的 m3u8 不再被当 MP4
+        var effective = rec
+        var isHls = XResolver.isHlsUrl(url) // B23：剥掉查询参数再判定，带 ?tag= 的 m3u8 不再被当 MP4
+        var audioUrl = if (isHls) findAudioUrl(rec) else null
 
         try {
+            // R2：v0.2.8 及更早的 variantsJson 没有 audioUrl。若直接下载旧 HLS 记录，
+            // 只会下载视频轨 → 无声。这里重新解析一次，取回音频播放列表并写回记录。
+            if (isHls && audioUrl == null) {
+                val fresh = XResolver.resolve(rec.tweetId)
+                // 解析可能被 16s 超时/取消包装，先确认协程仍存活（暂停/取消优先）
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (fresh !is ResolveResult.Success) {
+                    setFailed(rec, "该记录由旧版本解析，缺少音轨信息；请检查网络后重新解析再下载")
+                    return
+                }
+                val match = QualityMatch.pick(fresh.qualities, rec.chosenLabel, url)
+                if (match == null) {
+                    setFailed(rec, "该视频的清晰度已变化，请重新解析后重新选择")
+                    return
+                }
+                val cur = dao.getById(rec.id) ?: return
+                if (cur.status != RecordStatus.DOWNLOADING) return
+                url = match.url
+                isHls = match.isHls
+                audioUrl = match.audioUrl
+                effective = cur.copy(
+                    chosenLabel = match.label,
+                    chosenUrl = url,
+                    variantsJson = VariantsJson.encode(fresh.qualities),
+                )
+            }
+
+            dao.upsert(effective.copy(status = RecordStatus.DOWNLOADING, progress = 0, errorMsg = null))
+            notifyProgress(effective.id, title, 0)
+
             if (isHls) {
                 // HLS 分片流：分片下载后合成单个带声 MP4
-                // B01：从 variantsJson 里找回该清晰度对应的音频播放列表 URL
-                val audioUrl = VariantsJson.decode(rec.variantsJson)
-                    .firstOrNull { it.label == rec.chosenLabel }?.audioUrl
-                val hlsTmp = File(context.cacheDir, "xdo/hls_${rec.id}")
+                val hlsTmp = File(context.cacheDir, "xdo/hls_${effective.id}")
                 hlsTmp.mkdirs()
                 // B14：分片级进度同时写 DB（节流）+ 通知，列表卡片不再长期停在 0%
                 var lastDbWrite = 0L
                 val hlsFile = withContext(Dispatchers.IO) {
                     HlsDownloader.download(client, hlsTmp, url, audioUrl) { pct ->
-                        notifyProgress(rec.id, title, pct)
+                        notifyProgress(effective.id, title, pct)
                         val now = System.currentTimeMillis()
                         if (now - lastDbWrite > 400 &&
-                            synchronized(jobs) { jobs.containsKey(rec.id) }
+                            synchronized(jobs) { jobs.containsKey(effective.id) }
                         ) {
                             lastDbWrite = now
                             // 回调运行在 IO 线程（withContext(IO) 内部），同步写库保证
                             // 与最终 DONE 写入的顺序（不会被滞后的进度写覆盖）
                             kotlinx.coroutines.runBlocking {
-                                dao.upsert(rec.copy(status = RecordStatus.DOWNLOADING, progress = pct))
+                                dao.upsert(effective.copy(status = RecordStatus.DOWNLOADING, progress = pct))
                             }
                         }
                     }
@@ -235,7 +271,7 @@ class DownloadManager(
                 if (!hlsFile.exists() || hlsFile.length() == 0L) {
                     throw java.io.IOException("HLS 合成结果为空")
                 }
-                val finished = dao.getById(rec.id) ?: return
+                val finished = dao.getById(effective.id) ?: return
                 if (finished.status != RecordStatus.DOWNLOADING) return
                 val savedUri = MediaSaver.save(context, hlsFile, finished.fileName())
                 if (savedUri == null) {
@@ -255,20 +291,20 @@ class DownloadManager(
                 hlsFile.delete()
                 hlsTmp.deleteRecursively()
                 deleteReplacedMedia(oldUri, savedUri) // B19：重下载成功后清理旧文件，不留重复
-                clearProgress(rec.id)
-                DownloadService.finishDone(context, rec.id, title)
+                clearProgress(effective.id)
+                DownloadService.finishDone(context, effective.id, title)
             } else {
                 withContext(Dispatchers.IO) {
                     // B04：part 与 URL 绑定；换清晰度（URL 变化）后旧 part 自动作废
-                    val part = partFile(rec.id, url)
-                    cleanStaleParts(rec.id, part)
+                    val part = partFile(effective.id, url)
+                    cleanStaleParts(effective.id, part)
                     val downloaded = part.length()
-                    downloadToPart(part, url, downloaded, rec, title)
+                    downloadToPart(part, url, downloaded, effective, title)
                 }
                 // 转存媒体库
-                val finished = dao.getById(rec.id) ?: return
+                val finished = dao.getById(effective.id) ?: return
                 if (finished.status != RecordStatus.DOWNLOADING) return
-                val part = partFile(rec.id, url)
+                val part = partFile(effective.id, url)
                 val savedUri = MediaSaver.save(context, part, finished.fileName())
                 if (savedUri == null) {
                     // B20：part 保留（不提前删除），可直接重试转存
@@ -287,8 +323,8 @@ class DownloadManager(
                     completedAt = System.currentTimeMillis(),
                 ))
                 deleteReplacedMedia(oldUri, savedUri)
-                clearProgress(rec.id)
-                DownloadService.finishDone(context, rec.id, title)
+                clearProgress(effective.id)
+                DownloadService.finishDone(context, effective.id, title)
             }
         } catch (e: CancellationException) {
             // B18：取消/暂停时清掉 HLS 临时目录（MP4 的 part 保留供续传）
@@ -304,6 +340,11 @@ class DownloadManager(
             return
         }
     }
+
+    /** 新记录：从 variantsJson 里取所选清晰度的音频播放列表 URL */
+    private fun findAudioUrl(rec: DownloadRecord): String? =
+        VariantsJson.decode(rec.variantsJson)
+            .firstOrNull { it.label == rec.chosenLabel }?.audioUrl
 
     /** B19：重下载成功后删除旧媒体文件（URI 不同才删），避免重复文件堆积 */
     private fun deleteReplacedMedia(oldUri: String?, newUri: String) {

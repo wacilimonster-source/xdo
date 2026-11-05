@@ -1,6 +1,6 @@
 {
-  "versionCode": 20,
-  "versionName": "0.2.9",
-  "updateMessage": "修复 36 项问题：HLS 下载无声音（默认清晰度）、重复分享重置记录状态、重新解析按钮无效、换清晰度续产出损坏视频、Android 8/9 无法保存、进程被杀后记录永久卡死等；下载进度/通知/更新弹窗多项体验修复，并新增单元测试。",
-  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.9.apk"
+  "versionCode": 21,
+  "versionName": "0.2.10",
+  "updateMessage": "修复 v0.2.9 复测遗留问题：通知栏取消后常驻「准备下载」通知、旧记录 HLS 缺少音轨信息仍会下载无声视频、Android 8/9 相册不显示、HLS 保存失败重试整段重下、多任务下载无取消按钮、重复解析并发。",
+  "apkUrl": "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/releases/xdo_v0.2.10.apk"
 }

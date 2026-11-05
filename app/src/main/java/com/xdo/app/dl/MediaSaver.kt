@@ -2,6 +2,7 @@ package com.xdo.app.dl
 
 import android.content.ContentValues
 import android.content.Context
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -67,6 +68,10 @@ object MediaSaver {
             if (dir.exists() || dir.mkdirs()) {
                 val target = File(dir, displayName)
                 part.copyTo(target, overwrite = true)
+                // R3：API 26–28 公共目录需要主动通知媒体库扫描，否则相册可能不显示
+                MediaScannerConnection.scanFile(
+                    context, arrayOf(target.absolutePath), arrayOf("video/mp4"), null,
+                )
                 return fileProviderUri(context, target)
             }
         }
