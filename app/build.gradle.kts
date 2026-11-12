@@ -7,6 +7,49 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// ============================================================
+// 版本号：唯一来源是仓库根目录 version.txt
+// 本地构建与 GitHub Actions 读同一份数据，发版只需改 version.txt 一处。
+// 临时覆盖：./gradlew -PxdoVersionCode=30 -PxdoVersionName=0.3.0 ...
+// ============================================================
+val versionFile = rootProject.file("version.txt")
+val versionText = if (versionFile.isFile) versionFile.readText(Charsets.UTF_8) else ""
+
+fun versionString(name: String): String? =
+    Regex("\"$name\"\\s*:\\s*\"([^\"]*)\"").find(versionText)?.groupValues?.get(1)
+
+fun versionInt(name: String): Int? =
+    Regex("\"$name\"\\s*:\\s*(\\d+)").find(versionText)?.groupValues?.get(1)?.toIntOrNull()
+
+val xdoVersionCode = (project.findProperty("xdoVersionCode") as String?)?.toIntOrNull()
+    ?: versionInt("versionCode")
+    ?: 22
+val xdoVersionName = (project.findProperty("xdoVersionName") as String?)
+    ?: versionString("versionName")
+    ?: "0.2.11"
+
+// ============================================================
+// 发版签名：必须继续使用 v0.2.8 及更早版本的历史密钥，否则老用户会因签名不同无法覆盖安装。
+// - 本地：~/.android/xdo-release.keystore
+// - CI：XDO_KEYSTORE_FILE 指向由 Secrets（base64）解码出的密钥文件
+// 口令/别名可用环境变量覆盖，默认值即历史密钥的配置。
+// ============================================================
+fun envOr(name: String, fallback: String): String =
+    System.getenv(name)?.takeIf { it.isNotBlank() } ?: fallback
+
+val stableKeystore = File(
+    System.getenv("XDO_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+        ?: File(System.getProperty("user.home"), ".android/xdo-release.keystore").absolutePath
+)
+val hasStableKeystore = stableKeystore.isFile
+
+if (!hasStableKeystore) {
+    logger.warn(
+        "xdo: 未找到发版密钥 ${stableKeystore.absolutePath}，" +
+            "release 将退回 debug 签名（只可用于验证构建，不能对外发布）"
+    )
+}
+
 android {
     namespace = "com.xdo.app"
     compileSdk = 34
@@ -15,22 +58,18 @@ android {
         applicationId = "com.xdo.app"
         minSdk = 26
         targetSdk = 34
-        // 发布新版本时同步修改；version.txt 的 versionCode 必须 >= 此值（判更新唯一依据）
-        versionCode = 22
-        versionName = "0.2.11"
+        // 来自仓库根 version.txt（version.txt 的 versionCode 即「判更新」的唯一依据）
+        versionCode = xdoVersionCode
+        versionName = xdoVersionName
     }
 
-    // 发版签名：必须继续使用 v0.2.8 及更早版本的历史密钥，否则老用户会因签名不同无法覆盖安装。
-    // 密钥不入库，固定放在 ~/.android/xdo-release.keystore（alias=androiddebugkey，密码=android）。
-    // 注意：v0.2.9/v0.2.10 误用了当前机器的新 debug 密钥，导致从 v0.2.8 升级失败；v0.2.11 起恢复。
-    val stableKeystore = File(System.getProperty("user.home"), ".android/xdo-release.keystore")
     signingConfigs {
-        if (stableKeystore.exists()) {
+        if (hasStableKeystore) {
             create("releaseStable") {
                 storeFile = stableKeystore
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
+                storePassword = envOr("XDO_STORE_PASSWORD", "android")
+                keyAlias = envOr("XDO_KEY_ALIAS", "androiddebugkey")
+                keyPassword = envOr("XDO_KEY_PASSWORD", "android")
             }
         }
     }
@@ -38,10 +77,10 @@ android {
     buildTypes {
         release {
             // 发布版使用与历史版本一致的密钥签名，保证可以覆盖安装
-            signingConfig = if (stableKeystore.exists()) {
+            signingConfig = if (hasStableKeystore) {
                 signingConfigs.getByName("releaseStable")
             } else {
-                // 兜底：没有历史密钥时退回 debug 签名（会与老版本不一致，仅用于本机构建）
+                // 兜底：没有历史密钥时退回 debug 签名（会与老版本不一致，仅用于验证构建）
                 signingConfigs.getByName("debug")
             }
             isMinifyEnabled = true
@@ -68,6 +107,17 @@ android {
     }
     packagingOptions {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+}
+
+/** 打印实际参与构建的版本/签名信息，CI 日志里可直接核对 */
+tasks.register("printBuildInfo") {
+    group = "help"
+    description = "打印实际参与构建的 versionCode / versionName 与签名密钥"
+    doLast {
+        println("versionCode = $xdoVersionCode")
+        println("versionName = $xdoVersionName")
+        println("keystore    = ${stableKeystore.absolutePath} (exists=$hasStableKeystore)")
     }
 }
 

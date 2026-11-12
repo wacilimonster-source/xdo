@@ -12,3 +12,11 @@ app/build/
 *.apk
 !releases/*.apk
 *.aab
+
+# 签名密钥绝不入库（CI 用 Secrets 里的 base64）
+*.jks
+*.keystore
+.secrets/
+
+# 本机工作区数据
+.workbuddy/
