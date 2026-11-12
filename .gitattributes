@@ -1,0 +1,7 @@
+# 统一换行符：脚本/工作流用 LF，避免在 Windows 上编辑后 CI 里出现 \r 报错
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.kts   text eol=lf
+*.txt   text eol=lf
+gradlew text eol=lf
