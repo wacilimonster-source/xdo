@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import androidx.core.content.FileProvider
 import com.xdo.app.dl.AppPrefsHolder
 import kotlinx.coroutines.CoroutineScope
@@ -183,12 +184,17 @@ object UpdateManager {
         }
     }
 
+    private const val TAG = "XdoUpdate"
+
     private suspend fun downloadApk(url: String, onProgress: (Long, Long) -> Unit): File? =
         withContext(Dispatchers.IO) {
             runCatching {
                 val req = Request.Builder().url(url).build()
                 client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful || resp.body == null) return@use null
+                    if (!resp.isSuccessful || resp.body == null) {
+                        Log.w(TAG, "downloadApk: HTTP ${resp.code} url=$url")
+                        return@use null
+                    }
                     val body = resp.body!!
                     val total = body.contentLength()
                     val dir = File(app().cacheDir, "xdo")
@@ -208,11 +214,15 @@ object UpdateManager {
                         }
                         // B32：完整性校验——字节数与 Content-Length 不符视为失败
                         val complete = total <= 0 || written == total
-                        if (!complete) target.delete()
+                        if (!complete) {
+                            Log.w(TAG, "downloadApk: 不完整 written=$written total=$total")
+                            target.delete()
+                        }
                         if (complete) target else null
                     }
                 }
-            }.getOrNull()
+            }.onFailure { Log.w(TAG, "downloadApk: ${it.javaClass.simpleName}: ${it.message}") }
+                .getOrNull()
         }
 
     /** B32：对比 APK 签名与当前应用签名是否一致（兼容 API 26/27 的 GET_SIGNATURES 与 28+ 的 SigningInfo） */
