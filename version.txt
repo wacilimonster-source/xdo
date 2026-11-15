@@ -2,5 +2,5 @@
   "versionCode": 24,
   "versionName": "0.3.1",
   "updateMessage": "新增安装权限引导：遇到「安装未知应用」未开启时一键跳转系统设置，开启后自动继续安装，无需重新下载。",
-  "apkUrl": "https://github.com/wacilimonster-source/xdo.git/releases/download/v0.3.1/xdo_v0.3.1.apk"
+  "apkUrl": "https://github.com/wacilimonster-source/xdo/releases/download/v0.3.1/xdo_v0.3.1.apk"
 }
