@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>X 下载助手 · UI 优化原型</title>
+<style>
+/* ================= 设计 Token(X Lights out) ================= */
+:root{
+  --bg:#000; --surface:#16181C; --surface2:#202327; --border:#2F3336;
+  --text:#E7E9EA; --text2:#71767B;
+  --blue:#1D9BF0; --blue-dim:rgba(29,155,240,.12);
+  --green:#00BA7C; --red:#F4212E; --yellow:#FFD400;
+  --radius:16px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:#0a0d10;color:var(--text);display:flex;
+}
+svg{flex:none}
+button{font-family:inherit;border:none;background:none;color:inherit;cursor:pointer}
+
+/* ================= 侧栏导航 ================= */
+#sidebar{width:300px;flex:none;height:100vh;overflow-y:auto;background:#0d1117;border-right:1px solid #1c2128;padding:20px 0 30px}
+#sidebar h1{font-size:16px;padding:0 20px 4px}
+#sidebar .sub{font-size:12px;color:var(--text2);padding:0 20px 14px;line-height:1.5}
+.side-group{font-size:11px;font-weight:700;color:var(--text2);letter-spacing:1px;padding:16px 20px 6px}
+.side-item{display:block;width:100%;text-align:left;padding:8px 20px;border-left:3px solid transparent;transition:background .15s}
+.side-item:hover{background:#131920}
+.side-item.active{background:#131920;border-left-color:var(--blue)}
+.side-item .t{font-size:13px;font-weight:600;display:block}
+.side-item.active .t{color:var(--blue)}
+.side-item .d{font-size:11px;color:var(--text2);margin-top:2px;display:block;line-height:1.4}
+#sidebar footer{font-size:11px;color:var(--text2);padding:20px;line-height:1.6;border-top:1px solid #1c2128;margin-top:16px}
+
+/* ================= 舞台 ================= */
+#stage{flex:1;display:flex;flex-direction:column;align-items:center;padding:24px 20px 40px;overflow-y:auto;height:100vh}
+.stage-head{width:100%;max-width:900px;display:flex;align-items:flex-start;gap:16px;margin-bottom:18px}
+.stage-head .info{flex:1}
+.stage-head h2{font-size:18px}
+.stage-head p{font-size:13px;color:var(--text2);margin-top:4px;line-height:1.5;max-width:640px}
+.note-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);background:#131920;border:1px solid #1c2128;border-radius:20px;padding:8px 14px;white-space:nowrap;margin-top:2px;cursor:pointer;user-select:none}
+.note-toggle input{accent-color:var(--blue);cursor:pointer}
+
+/* ================= 手机框 ================= */
+#phone{width:390px;height:780px;flex:none;background:#000;border:1px solid #333c46;border-radius:44px;overflow:hidden;position:relative;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+#statusbar{height:34px;display:flex;align-items:center;justify-content:space-between;padding:0 26px;font-size:13px;font-weight:600;position:relative;z-index:30}
+#statusbar .cam{position:absolute;left:50%;top:10px;width:14px;height:14px;border-radius:50%;background:#0d0f12;border:1px solid #1c2128;transform:translateX(-50%)}
+#statusbar .sbright{display:flex;align-items:center;gap:6px}
+.bars{display:flex;align-items:flex-end;gap:1.5px}
+.bars i{width:3px;background:var(--text);border-radius:1px;display:block}
+.bars i:nth-child(1){height:4px}.bars i:nth-child(2){height:6px}.bars i:nth-child(3){height:8px}.bars i:nth-child(4){height:10px}
+#screen{position:absolute;inset:34px 0 0 0;overflow:hidden;display:flex;flex-direction:column}
+#screenarea{flex:1;overflow-y:auto;overflow-x:hidden;scrollbar-width:none}
+#screenarea::-webkit-scrollbar{display:none}
+.gesture{position:absolute;bottom:6px;left:50%;transform:translateX(-50%);width:120px;height:4px;border-radius:2px;background:#3a4149;z-index:40;pointer-events:none}
+
+/* ================= 通用组件 ================= */
+.app-top{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;position:sticky;top:0;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);z-index:20}
+.app-top .title{font-size:19px;font-weight:800}
+.icon-btn{width:36px;height:36px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--text);transition:background .15s}
+.icon-btn:hover{background:var(--surface2)}
+.icon-btn.small{width:30px;height:30px}
+.icon-btn.danger{color:var(--red)}
+
+/* 搜索框 H-01 */
+.search-wrap{display:flex;align-items:center;gap:8px;margin:4px 16px 8px;background:var(--surface);border:1.5px solid var(--border);border-radius:999px;padding:0 6px 0 14px;height:44px;transition:border-color .2s}
+.search-wrap:focus-within{border-color:#3e6a8c}
+.search-wrap.is-link{border-color:var(--blue)}
+.search-wrap .sicon{color:var(--text2)}
+.search-wrap input{flex:1;background:none;border:none;outline:none;color:var(--text);font-size:14px;min-width:0}
+.search-wrap input::placeholder{color:var(--text2)}
+.btn-parse{display:none;background:var(--blue);color:#fff;font-size:13px;font-weight:700;border-radius:999px;padding:7px 16px}
+.search-wrap.is-link .btn-parse{display:block}
+.btn-clear{display:none;color:var(--text2);width:26px;height:26px;border-radius:50%;align-items:center;justify-content:center;flex:none}
+.search-wrap.has-text:not(.is-link) .btn-clear{display:inline-flex}
+
+/* 筛选 chips H-02 */
+.chips{display:flex;gap:8px;padding:2px 16px 10px;overflow-x:auto;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;font-size:13px;font-weight:600;color:var(--text2);border:1px solid var(--border);border-radius:999px;padding:6px 14px;transition:all .15s}
+.chip b{font-weight:700;margin-left:2px}
+.chip.on{background:var(--blue);border-color:var(--blue);color:#fff}
+
+/* 剪贴板 banner H-07 */
+.clip-banner{display:flex;align-items:center;gap:10px;margin:0 16px 10px;background:var(--blue-dim);border:1px solid rgba(29,155,240,.4);border-radius:12px;padding:9px 8px 9px 12px;animation:slidedown .3s ease}
+@keyframes slidedown{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.clip-banner .txt{flex:1;font-size:13px;color:#a8d5f5}
+.mini-pill{flex:none;font-size:12px;font-weight:700;border-radius:999px;padding:5px 14px}
+.mini-pill.blue{background:var(--blue);color:#fff}
+.mini-pill.ghost{border:1px solid var(--blue);color:var(--blue)}
+.mini-pill.ghost:hover{background:var(--blue-dim)}
+
+/* 记录卡 H-04 */
+.list{padding:2px 16px 90px;display:flex;flex-direction:column;gap:10px}
+.card{position:relative;overflow:hidden;border-radius:var(--radius);background:var(--surface);user-select:none;touch-action:pan-y}
+.card .swipe-bg{position:absolute;inset:0;background:rgba(244,33,46,.15);display:flex;align-items:center;padding-left:22px;color:var(--red)}
+.card-inner{position:relative;display:flex;gap:12px;padding:12px;background:var(--surface);border-radius:var(--radius);transition:transform .25s ease}
+.card.dragging .card-inner{transition:none}
+.thumb{position:relative;width:112px;height:63px;flex:none;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.thumb .play-ov{position:absolute;width:26px;height:26px;border-radius:50%;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;color:#fff}
+.thumb .dur{position:absolute;right:4px;bottom:4px;background:rgba(0,0,0,.75);color:#fff;font-size:10px;font-weight:600;padding:1px 5px;border-radius:4px}
+.cbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.crow1{display:flex;align-items:flex-start;gap:4px}
+.ctitle{flex:1;font-size:14.5px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.cmeta{font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cstatus{display:flex;align-items:center;gap:8px;min-height:26px;font-size:12.5px;color:var(--text2)}
+.cstatus .grow{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qchip{display:inline-block;font-size:11px;font-weight:700;color:var(--blue);background:var(--blue-dim);border-radius:5px;padding:1px 6px}
+.okmark{color:var(--green);display:inline-flex}
+.warn{color:var(--red);display:inline-flex}
+.paused-t{color:var(--yellow)}
+.ready-t{color:var(--blue)}
+.spin{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:rot 1s linear infinite;flex:none}
+@keyframes rot{to{transform:rotate(360deg)}}
+.pbar{width:100%;height:4px;border-radius:2px;background:var(--surface2);overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--blue);border-radius:2px;transition:width .3s}
+.dl-block{width:100%;display:flex;flex-direction:column;gap:5px}
+.dl-row2{display:flex;align-items:center;gap:6px}
+.dl-row2 .grow{flex:1;min-width:0;font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctrl-btn{width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:var(--text2);flex:none}
+.ctrl-btn:hover{background:var(--surface2);color:var(--text)}
+
+/* 卡片菜单 H-06 */
+.menu{position:absolute;top:34px;right:8px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;min-width:168px;padding:6px;z-index:60;box-shadow:0 8px 30px rgba(0,0,0,.6);animation:pop .15s ease}
+@keyframes pop{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:none}}
+.menu .mi{display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border-radius:8px;font-size:13.5px;font-weight:500;text-align:left}
+.menu .mi:hover{background:rgba(255,255,255,.06)}
+.menu .mi.danger{color:var(--red)}
+.menu .divider{height:1px;background:var(--border);margin:4px 8px}
+
+/* 空状态 H-08 */
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;gap:0}
+.empty .big-ic{width:76px;height:76px;border-radius:50%;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--text2);margin-bottom:18px}
+.empty h3{font-size:17px;margin-bottom:6px}
+.empty p{font-size:13px;color:var(--text2);line-height:1.5}
+.steps{width:100%;max-width:300px;margin-top:22px;display:flex;flex-direction:column;gap:10px;text-align:left}
+.step{display:flex;gap:12px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 14px}
+.step .n{width:26px;height:26px;flex:none;border-radius:50%;background:var(--blue-dim);color:var(--blue);font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center}
+.step .t{font-size:13px;line-height:1.4}
+.step .t small{display:block;color:var(--text2);font-size:12px;margin-top:1px}
+
+/* Snackbar H-09 */
+.snack{position:absolute;left:16px;right:16px;bottom:24px;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:12px;font-size:13.5px;z-index:90;animation:slideup .25s ease;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+@keyframes slideup{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.snack .txt{flex:1;line-height:1.4}
+.snack .act{color:var(--blue);font-weight:700;flex:none}
+.snack .act:hover{text-decoration:underline}
+
+/* 顶栏(子页面) */
+.nav-top{display:flex;align-items:center;gap:8px;padding:8px 12px;position:sticky;top:0;background:rgba(0,0,0,.85);backdrop-filter:blur(8px);z-index:20}
+.nav-top .title{font-size:17px;font-weight:800;flex:1}
+
+/* ================= 解析页 R-05 ================= */
+.hero{margin:6px 16px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.hero .cover{position:relative;height:180px;display:flex;align-items:center;justify-content:center}
+.hero .cover .play-ov{position:absolute;width:52px;height:52px;border-radius:50%;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;color:#fff}
+.hero .cover .dur{position:absolute;right:10px;bottom:10px;background:rgba(0,0,0,.75);color:#fff;font-size:11px;font-weight:600;padding:2px 7px;border-radius:6px}
+.hero .hbody{padding:12px 14px 14px}
+.hero .author{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#1d3a55,#2b6fa5);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;flex:none}
+.hero .author .nm{font-size:14px;font-weight:700}
+.hero .author .hd{font-size:13px;color:var(--blue)}
+.hero .txt{font-size:13.5px;line-height:1.45;color:#cfd3d7;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+
+/* 清晰度列表 R-01 */
+.qlist{display:flex;flex-direction:column;gap:8px;padding:0 16px;margin-bottom:8px}
+.qrow{display:flex;align-items:center;gap:12px;background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:12px 14px;cursor:pointer;transition:all .15s}
+.qrow:hover{background:#1a1d22}
+.qrow.sel{border-color:var(--blue);background:rgba(29,155,240,.08)}
+.radio{width:18px;height:18px;border-radius:50%;border:2px solid var(--text2);flex:none;position:relative}
+.qrow.sel .radio{border-color:var(--blue)}
+.qrow.sel .radio::after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--blue)}
+.qmain{flex:1;min-width:0}
+.qname{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:6px}
+.fmt{font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--text2);border:1px solid var(--border);border-radius:4px;padding:1px 4px}
+.defbadge{font-size:10px;font-weight:700;color:var(--blue);background:var(--blue-dim);border-radius:4px;padding:1px 5px}
+.qsub{font-size:11.5px;color:var(--text2);margin-top:2px}
+.qsize{text-align:right;flex:none}
+.qsize .s{font-size:13px;font-weight:700;color:var(--text)}
+.qsize .k{font-size:10.5px;color:var(--text2);margin-top:2px}
+
+/* 底部固定下载栏 R-02 */
+.bottom-bar{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.9);backdrop-filter:blur(8px);border-top:1px solid var(--border);padding:12px 16px 20px;display:flex;align-items:center;gap:14px;z-index:25}
+.bottom-bar .sum{flex:1;font-size:12.5px;color:var(--text2);line-height:1.35}
+.bottom-bar .sum b{display:block;color:var(--text);font-size:14px}
+.btn-primary{background:var(--blue);color:#fff;font-size:15px;font-weight:800;border-radius:999px;padding:12px 30px;transition:filter .15s}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn-primary:disabled{filter:grayscale(.4) brightness(.8);cursor:default}
+
+/* 居中状态(R-04 / 失败态 R-03) */
+.center-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;gap:0}
+.center-state h3{font-size:17px;margin:14px 0 6px}
+.center-state p{font-size:13px;color:var(--text2);line-height:1.5;max-width:260px}
+.center-state .err-t{color:var(--red)}
+.center-state .btns{display:flex;gap:10px;margin-top:22px;align-items:center}
+
+/* ================= 播放页 P-01/P-02 ================= */
+.player{position:absolute;inset:0;background:#000;display:flex;flex-direction:column}
+.video-area{flex:1;display:flex;align-items:center;justify-content:center;position:relative}
+.video-box{width:100%;aspect-ratio:16/9;background:linear-gradient(135deg,#14202e,#1f3a52 60%,#0e141b);display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer}
+.video-box .bigplay{width:64px;height:64px;border-radius:50%;background:rgba(0,0,0,.55);border:1.5px solid rgba(255,255,255,.35);display:flex;align-items:center;justify-content:center;color:#fff;transition:opacity .2s}
+.player.hide-cursor .bigplay{opacity:0}
+.p-top{position:absolute;top:0;left:0;right:0;padding:10px 12px 28px;background:linear-gradient(rgba(0,0,0,.75),transparent);display:flex;align-items:center;gap:6px;z-index:10;opacity:0;transform:translateY(-6px);transition:all .2s}
+.player.show-ui .p-top{opacity:1;transform:none}
+.p-top .ptitle{flex:1;font-size:14.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-bottom{position:absolute;bottom:0;left:0;right:0;padding:26px 16px 22px;background:linear-gradient(transparent,rgba(0,0,0,.8));z-index:10;opacity:0;transform:translateY(6px);transition:all .2s}
+.player.show-ui .p-bottom{opacity:1;transform:none}
+.p-ctl{display:flex;align-items:center;gap:14px}
+.p-time{font-size:12px;color:#d0d4d8;font-variant-numeric:tabular-nums;flex:none}
+.p-time span{color:var(--text2)}
+.p-progress{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.25);position:relative;cursor:pointer}
+.p-progress .buf{position:absolute;inset:0;width:64%;background:rgba(255,255,255,.35);border-radius:2px}
+.p-progress .played{position:absolute;inset:0;width:23%;background:var(--blue);border-radius:2px}
+.p-progress .knob{position:absolute;left:23%;top:50%;width:12px;height:12px;border-radius:50%;background:var(--blue);transform:translate(-50%,-50%)}
+.play-err-card{background:rgba(22,24,28,.95);border:1px solid var(--border);border-radius:var(--radius);padding:22px 20px;text-align:center;max-width:280px;backdrop-filter:blur(6px)}
+
+/* ================= 设置页 S-01 ================= */
+.set-groups{padding:8px 16px 90px;display:flex;flex-direction:column;gap:18px}
+.sgroup{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.sgroup .sec-label{font-size:12px;font-weight:800;color:var(--text2);padding:14px 16px 4px}
+.srow{display:flex;align-items:center;gap:12px;padding:13px 16px;min-height:52px;border-top:1px solid #20242a;cursor:pointer}
+.srow:hover{background:#1a1d22}
+.srow .s-main{flex:1;min-width:0}
+.srow .s-t{font-size:14.5px;font-weight:600}
+.srow .s-d{font-size:12px;color:var(--text2);margin-top:2px;line-height:1.4}
+.srow .chev{color:var(--text2);flex:none}
+.switch{width:44px;height:26px;border-radius:13px;background:var(--surface2);border:1px solid var(--border);position:relative;flex:none;transition:background .2s;cursor:pointer}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .2s}
+.switch.on{background:var(--green);border-color:var(--green)}
+.switch.on::after{left:21px}
+.state-ok{color:var(--green);font-size:12px;font-weight:600}
+.state-warn{color:var(--red);font-size:12px;font-weight:600}
+.about-txt{font-size:12.5px;color:var(--text2);line-height:1.6;padding:10px 16px 14px}
+
+/* ================= 弹窗 ================= */
+.overlay{position:absolute;inset:0;background:rgba(0,0,0,.65);z-index:70;display:flex;align-items:center;justify-content:center;padding:24px;animation:fadein .2s ease}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
+.dlg{width:100%;background:var(--surface);border:1px solid #3a4149;border-radius:20px;padding:20px;animation:pop .18s ease;box-shadow:0 16px 50px rgba(0,0,0,.7)}
+.dlg h3{font-size:17px;margin-bottom:8px}
+.dlg .dlg-body{font-size:13.5px;color:#cfd3d7;line-height:1.55}
+.dlg .dlg-body .sub-line{margin-top:8px;color:var(--text2);font-size:12.5px}
+.dlg .dlg-btns{display:flex;justify-content:flex-end;align-items:center;gap:8px;margin-top:20px}
+.btn-text{color:var(--text);font-weight:700;font-size:14px;padding:9px 14px;border-radius:999px}
+.btn-text:hover{background:var(--surface2)}
+.btn-text.danger{color:var(--red)}
+.btn-fill{background:var(--blue);color:#fff;font-weight:700;font-size:14px;padding:9px 18px;border-radius:999px}
+.btn-fill:hover{filter:brightness(1.08)}
+.btn-fill.danger{background:var(--red)}
+.btn-fill.disabled{filter:grayscale(.5) brightness(.75);cursor:default}
+.upd-prog{margin-top:14px}
+.upd-prog .pbar{height:6px}
+.upd-prog .plabel{display:flex;justify-content:space-between;font-size:12px;color:var(--text2);margin-top:6px}
+
+/* Bottom sheet(S-02 / 播放页菜单 / 清晰度) */
+.sheet-mask{position:absolute;inset:0;background:rgba(0,0,0,.65);z-index:70;animation:fadein .2s ease}
+.sheet{position:absolute;left:8px;right:8px;bottom:8px;background:var(--surface);border:1px solid #3a4149;border-radius:20px;padding:10px 0 12px;z-index:71;animation:sheetup .25s cubic-bezier(.2,.8,.3,1);box-shadow:0 -8px 40px rgba(0,0,0,.6)}
+@keyframes sheetup{from{transform:translateY(40px);opacity:.5}to{transform:none;opacity:1}}
+.sheet .handle{width:36px;height:4px;border-radius:2px;background:var(--border);margin:2px auto 10px}
+.sheet .sh-title{font-size:16px;font-weight:800;padding:4px 20px 2px}
+.sheet .sh-desc{font-size:12.5px;color:var(--text2);padding:0 20px 8px;line-height:1.4}
+.sheet .mi{display:flex;align-items:center;gap:14px;width:100%;padding:13px 20px;font-size:14.5px;font-weight:500;text-align:left}
+.sheet .mi:hover{background:rgba(255,255,255,.05)}
+.sheet .mi.danger{color:var(--red)}
+.sheet .mi .mi-ic{color:var(--text2);width:22px;display:inline-flex;justify-content:center}
+.sheet .mi.danger .mi-ic{color:var(--red)}
+.sheet .mi .mi-lbl{flex:1}
+.sheet .sh-btns{padding:10px 20px 0}
+.sheet .sh-btns .btn-fill{width:100%;padding:12px}
+
+/* 通知 mock */
+.notif-shade{padding:14px 14px 90px;display:flex;flex-direction:column;gap:10px}
+.notif-shade .shade-title{font-size:13px;color:var(--text2);padding:2px 6px 6px}
+.notif{background:#1b1e23;border-radius:18px;padding:14px 16px;display:flex;flex-direction:column;gap:6px;border:1px solid #262a30}
+.notif .nhead{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--text2)}
+.notif .nhead .appic{width:16px;height:16px;border-radius:4px;background:var(--blue);display:inline-flex;align-items:center;justify-content:center;color:#fff}
+.notif .nhead .expand{margin-left:auto;color:var(--text2)}
+.notif .ntitle{font-size:13.5px;font-weight:700}
+.notif .ntext{font-size:12.5px;color:#c3c7cb;line-height:1.4}
+.notif .nacts{display:flex;gap:6px;margin-top:4px}
+.notif .nact{flex:1;text-align:center;font-size:12.5px;font-weight:700;color:var(--blue);background:rgba(255,255,255,.04);border-radius:8px;padding:7px 4px}
+.notif .npbar{height:3px;border-radius:2px;background:#2c3138;margin-top:2px;overflow:hidden}
+.notif .npbar i{display:block;height:100%;background:var(--blue)}
+
+/* ================= 优化标注 ================= */
+.has-note{position:relative}
+.note-dot{position:absolute;top:-7px;right:-7px;background:var(--yellow);color:#000;font-size:9.5px;font-weight:800;padding:2px 5px;border-radius:9px;z-index:65;cursor:help;letter-spacing:.2px;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.note-dot:hover::after{content:attr(data-tip);position:absolute;top:22px;right:-4px;background:#000;color:var(--text);border:1px solid var(--border);font-size:11.5px;font-weight:500;padding:8px 10px;border-radius:10px;width:220px;line-height:1.5;z-index:100}
+
+@media (max-width:1000px){
+  body{flex-direction:column}
+  #sidebar{width:100%;height:auto;max-height:200px;border-right:none;border-bottom:1px solid #1c2128}
+  #stage{height:auto}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ 侧栏 ============ -->
+<nav id="sidebar">
+  <h1>X 下载助手 · UI 优化原型</h1>
+  <div class="sub">深色单主题(X Lights out)· 适度重构<br>配套文档:<b>design/UI优化说明.md</b></div>
+  <div class="side-group">页面</div>
+  <div id="nav-pages"></div>
+  <div class="side-group">弹窗与浮层</div>
+  <div id="nav-dialogs"></div>
+  <div class="side-group">系统界面</div>
+  <div id="nav-system"></div>
+  <footer>手机框内可直接交互:筛选、搜索、左滑删除、菜单、播放控制等。<br>编号标注对应文档中的 H- / R- / P- / S- 条目。</footer>
+</nav>
+
+<!-- ============ 舞台 ============ -->
+<main id="stage">
+  <div class="stage-head">
+    <div class="info">
+      <h2 id="viewTitle"></h2>
+      <p id="viewDesc"></p>
+    </div>
+    <label class="note-toggle"><input type="checkbox" id="noteToggle">显示优化标注</label>
+  </div>
+  <div id="phone">
+    <div id="statusbar">
+      <span>9:41</span>
+      <div class="cam"></div>
+      <div class="sbright">
+        <span class="bars"><i></i><i></i><i></i><i></i></span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
+        <svg width="22" height="12" viewBox="0 0 26 13"><rect x="0.5" y="0.5" width="21" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".5"/><rect x="2.5" y="2.5" width="15" height="8" rx="1.5" fill="currentColor"/><rect x="23" y="4" width="2.5" height="5" rx="1" fill="currentColor" opacity=".5"/></svg>
+      </div>
+    </div>
+    <div id="screen"><div id="screenarea"></div><div class="gesture"></div></div>
+  </div>
+</main>
+
+<script>
+/* ================= 图标(feather 风格) ================= */
+const P = {
+  search:'<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+  share:'<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>',
+  copy:'<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  pause:'<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
+  play:'<polygon points="6 3 20 12 6 21 6 3" fill="currentColor" stroke="none"/>',
+  x:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  refresh:'<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+  check:'<polyline points="20 6 9 17 4 12"/>',
+  warn:'<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  more:'<circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/>',
+  back:'<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>',
+  film:'<rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>',
+  maximize:'<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
+  bell:'<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+  ext:'<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
+  chev:'<polyline points="9 18 15 12 9 6"/>',
+  clip:'<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
+  undo:'<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+};
+const ic = (n,s=20)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${P[n]}</svg>`;
+
+/* ================= 示例数据 ================= */
+const RECORDS = [
+ {id:'r1',title:'小猫第一次见到雪,反应太可爱了',author:'雪国列车',handle:'snowtrain',time:'今天 14:32',st:'downloading',prog:68,speed:'2.4MB/s',eta:'剩余 8s',dur:'0:58',g:'linear-gradient(135deg,#2b3a55,#4a6fa5)'},
+ {id:'r2',title:'十年前 vs 现在的手机拍照对比',author:'TechDaily',handle:'techdaily',time:'今天 11:05',st:'done',q:'720p',size:'14.3MB',dur:'3:42',g:'linear-gradient(135deg,#3a2b55,#7a5aa5)'},
+ {id:'r3',title:'现场版《海阔天空》全场合唱',author:'音乐现场君',handle:'liveshow',time:'昨天 22:41',st:'done',q:'1080p',size:'38.2MB',dur:'5:07',g:'linear-gradient(135deg,#552b2b,#a55a5a)'},
+ {id:'r4',title:'深夜食堂第十二集预告',author:'剧能说',handle:'dramadaily',time:'11-12 20:15',st:'paused',prog:42,dur:'24:10',g:'linear-gradient(135deg,#2b5537,#5aa57a)'},
+ {id:'r5',title:'这就是最近的通勤现状',author:'城市观察员',handle:'cityeye',time:'11-13 09:20',st:'failed',err:'网络连接中断,请重试',dur:'1:12',g:'linear-gradient(135deg,#55432b,#a58a5a)'},
+ {id:'r6',title:'航天发射精彩回顾 🚀',author:'太空探索',handle:'spacego',time:'11-10 18:03',st:'ready',dur:'1:23',g:'linear-gradient(135deg,#1d3a55,#2b6fa5)'},
+ {id:'r7',title:'年度发布会直播回放',author:'科技早知道',handle:'techem',time:'1 分钟前',st:'parsing',dur:'48:30',g:'linear-gradient(135deg,#30343a,#4a5058)'},
+];
+const QUALITIES = [
+ {label:'1080p',fmt:'HLS',br:'5200',size:'≈ 53.9MB',def:true},
+ {label:'720p',fmt:'HLS',br:'2800',size:'≈ 29.1MB'},
+ {label:'720p',fmt:'MP4',br:'2600',size:'≈ 27.1MB'},
+ {label:'480p',fmt:'HLS',br:'1500',size:'≈ 15.5MB'},
+ {label:'360p',fmt:'HLS',br:'800',size:'≈ 8.3MB'},
+ {label:'240p',fmt:'HLS',br:'400',size:'≈ 4.1MB'},
+];
+const SET_QUALITIES = ['智能(最高可用)','1440p','1080p','720p','480p','360p','240p'];
+const LINK_RE = /(https?:\/\/)?(www\.)?(x|twitter)\.com\/[^\s]*\/status\/\d+/i;
+
+/* ================= 交互状态 ================= */
+let curView='home', notesOn=false, filter='all', homeSearch='', openMenuId=null;
+const deletedIds = new Set();
+let resolveSel=0, setQualitySel=0, playerPlaying=false, wifiOnly=true;
+
+/* ================= 视图注册 ================= */
+const VIEWS = {};
+function view(id,group,title,desc,render){ VIEWS[id]={id,group,title,desc,render}; }
+
+/* ---------- 记录卡 ---------- */
+function stCls(st){return {downloading:'active',parsing:'active',ready:'active',paused:'active',done:'done',failed:'failed'}[st];}
+function statusHTML(r){
+  switch(r.st){
+    case 'downloading': return `<div class="dl-block">
+      <div class="pbar"><i style="width:${r.prog}%"></i></div>
+      <div class="dl-row2"><span class="grow">${r.prog}% · ${r.speed} · ${r.eta}</span>
+        <button class="ctrl-btn" title="暂停" onclick="event.stopPropagation();snack('已暂停,进度已保留')" data-note="H-03|下载中:内联暂停/取消,不用再进三点菜单(两步→一步)">${ic('pause',16)}</button>
+        <button class="ctrl-btn" title="取消" onclick="event.stopPropagation();snack('已取消下载,临时文件已清理')">${ic('x',16)}</button>
+      </div></div>`;
+    case 'parsing': return `<span class="spin"></span><span class="grow">正在解析…</span>`;
+    case 'ready': return `<span class="ready-t grow">待选择清晰度</span><button class="mini-pill ghost" onclick="event.stopPropagation();go('resolve')">继续</button>`;
+    case 'paused': return `<span class="paused-t grow">已暂停 · ${r.prog}%</span><button class="mini-pill ghost" onclick="event.stopPropagation();snack('继续下载,将恢复断点')">继续</button>`;
+    case 'failed': return `<span class="warn">${ic('warn',14)}</span><span class="grow" style="color:var(--red)">${r.err}</span><button class="mini-pill ghost" onclick="event.stopPropagation();snack('已重试,正在恢复下载')">重试</button>`;
+    case 'done': return `<span class="qchip">${r.q}</span><span class="grow">${r.size} · 已保存</span><span class="okmark">${ic('check',14)}</span>`;
+  }
+}
+function menuItems(r){
+  const m=[];
+  if(r.st==='downloading'||r.st==='paused'){m.push(['pause|play','暂停','snack("已暂停,进度已保留")']);m.push(['x','取消下载','delCard("'+r.id+'","已取消下载")']);}
+  if(['parsing','ready','failed'].includes(r.st)){m.push(['refresh','重新解析','snack("正在重新解析…")']);}
+  if(r.st==='done'){m.push(['play','播放','go("player")']);m.push(['share','分享文件','snack("已调起系统分享(原型演示)")']);m.push(['download','重新下载','snack("已重新加入下载队列")']);}
+  m.push(['copy','复制链接','snack("链接已复制")']);
+  m.push('DIV');
+  m.push(['trash','删除',"delCard('"+r.id+"','已删除「"+r.title.slice(0,10)+"…')"]);
+  return m.map(it=> it==='DIV' ? '<div class="divider"></div>' :
+    `<button class="mi ${it[0]==='trash'?'danger':''}" onclick="event.stopPropagation();closeMenu();${it[2]}">${ic(it[0].split('|')[0],17)}${it[1]}</button>`).join('');
+}
+function cardHTML(r,noteId){
+  const open = openMenuId===r.id;
+  return `<div class="card" data-id="${r.id}" id="card-${r.id}">
+    <div class="swipe-bg">${ic('trash',22)}</div>
+    <div class="card-inner" onclick="cardClick('${r.id}','${r.st}')">
+      <div class="thumb" style="background:${r.g}" ${noteId==='r2'?'data-note="H-04|卡片信息增强:16:9 缩略图 + 时长徽章;DONE 显示清晰度徽章与文件大小(数据已有 chosenLabel/fileSize)"':''}>
+        <span class="play-ov">${ic('play',13)}</span><span class="dur">${r.dur}</span>
+      </div>
+      <div class="cbody">
+        <div class="crow1">
+          <div class="ctitle">${r.title}</div>
+          <button class="icon-btn small" onclick="event.stopPropagation();toggleMenu('${r.id}')" data-note="${noteId==='r1'?'H-06|三点菜单按状态重组,图标语义修正(复制链接=copy),删除红色置底':''}">${ic('more',17)}</button>
+        </div>
+        <div class="cmeta">${r.author} · @${r.handle} · ${r.time}</div>
+        <div class="cstatus">${statusHTML(r)}</div>
+      </div>
+    </div>
+    ${open?`<div class="menu" onclick="event.stopPropagation()">${menuItems(r)}</div>`:''}
+  </div>`;
+}
+function refreshList(){
+  const area=document.getElementById('listArea'); if(!area) return;
+  const kw=homeSearch.trim();
+  let list=RECORDS.filter(r=>!deletedIds.has(r.id));
+  if(kw) list=list.filter(r=>(r.title+r.author+r.handle).toLowerCase().includes(kw.toLowerCase()));
+  else if(filter!=='all') list=list.filter(r=>stCls(r.st)===filter);
+  area.innerHTML = list.length ? `<div class="list">${list.map(r=>cardHTML(r,r.id==='r1'?'r1':(r.id==='r2'?'r2':''))).join('')}</div>`
+    : `<div class="empty">${ic('search',30)}<h3>没有匹配的记录</h3><p>换个关键词试试</p></div>`;
+  applyNotes();
+}
+
+/* ---------- 首页 ---------- */
+const CATS=[['all','全部',7],['active','进行中',4],['done','已完成',2],['failed','失败',1]];
+function homeHTML(opts={}){
+  const isLink=LINK_RE.test(homeSearch);
+  const showClip=opts.clip!==false, emptyMode=opts.empty||false, searchEmpty=opts.searchEmpty||false;
+  const chips = emptyMode?'':`<div class="chips" data-note="H-02|状态筛选:全部/进行中(解析+下载+暂停+待选)/已完成/失败,带计数,一键聚焦">${CATS.map(c=>`<button class="chip ${filter===c[0]?'on':''}" onclick="setFilter('${c[0]}')">${c[1]}<b>${c[2]}</b></button>`).join('')}</div>`;
+  const clip = (showClip&&!emptyMode)?`<div class="clip-banner" data-note="H-07|剪贴板检测条:文案精简 + 内联「解析」按钮,解析后自动消失">${ic('clip',16)}<span class="txt">检测到剪贴板中的 X 链接</span><button class="mini-pill blue" onclick="snack('已开始解析,可在列表查看进度')">解析</button><button class="icon-btn small" onclick="this.closest('.clip-banner').remove()">${ic('x',15)}</button></div>`:'';
+  let listHTML='';
+  if(emptyMode){
+    listHTML=`<div class="empty" data-note="H-08|首次使用空状态:三步引导,告诉用户入口在 X 的分享菜单里">
+      <div class="big-ic">${ic('film',32)}</div><h3>还没有下载记录</h3><p>在 X 里看到喜欢的视频,三步就能存到本地</p>
+      <div class="steps">
+        <div class="step"><span class="n">1</span><div class="t">打开 X 中的视频推文<small>点推文右上角「分享」</small></div></div>
+        <div class="step"><span class="n">2</span><div class="t">在分享菜单选择「X 下载助手」<small>自动识别链接并解析清晰度</small></div></div>
+        <div class="step"><span class="n">3</span><div class="t">选择清晰度开始下载<small>支持断点续传,完成后自动保存到相册</small></div></div>
+      </div></div>`;
+  }else if(searchEmpty){
+    listHTML=`<div class="empty"><div class="big-ic">${ic('search',30)}</div><h3>没有匹配「${homeSearch||'关键词'}」的记录</h3><p>试试其他关键词,或直接粘贴 X 链接解析</p>
+      <div style="margin-top:16px"><button class="btn-fill" onclick="homeSearch='';go('home')">清除搜索</button></div></div>`;
+  }else{
+    listHTML=`<div id="listArea"></div>`;
+  }
+  return `
+    <div class="app-top"><span class="title">X 下载助手</span>
+      <button class="icon-btn" onclick="go('settings')" title="设置">${ic('settings',21)}</button></div>
+    <div class="search-wrap ${isLink?'is-link':''} ${homeSearch&&!isLink?'has-text':''}" data-note="H-01|搜索/解析双模式:检测到 X 链接时边框变蓝并出现「解析」按钮;普通文本走实时搜索">
+      <span class="sicon">${ic('search',18)}</span>
+      <input id="searchInput" placeholder="搜索记录,或粘贴 X 链接" value="${homeSearch.replace(/"/g,'&quot;')}"
+        oninput="onSearchInput(this.value)" onkeydown="if(event.key==='Enter'&&document.querySelector('.search-wrap').classList.contains('is-link')){homeSearch='';go('home');snack('已开始解析,可在列表查看进度')}">
+      <button class="btn-clear" onclick="homeSearch='';go('home')">${ic('x',15)}</button>
+      <button class="btn-parse" onclick="homeSearch='';go('home');snack('已开始解析,可在列表查看进度')">解析</button>
+    </div>
+    ${chips}${clip}${listHTML}`;
+}
+view('home','pages','首页 · 下载记录列表','混合状态样例:下载中(内联暂停/取消)、已暂停、失败(内联重试)、已解析、已完成。试试:左滑卡片删除、点 ⋯ 菜单、切换筛选 chips、在搜索框粘贴含 x.com/i/status/ 的链接。',()=>homeHTML());
+view('home-empty','pages','首页 · 首次使用(空状态)','三步引导替代单句提示;此视图同时是「通知权限前置说明」弹窗的底板。',()=>homeHTML({empty:true,clip:false}));
+view('home-search-empty','pages','首页 · 搜索无结果','与「无记录」区分(B33):给出清除搜索动作。',()=>{homeSearch='测试';const h=homeHTML({searchEmpty:true});homeSearch='测试';return h;});
+view('home-link','pages','首页 · 粘贴链接解析态','搜索框检测到 X 链接:边框变蓝 + 「解析」按钮出现;回车或点按钮开始解析。试试输入任意 x.com/i/status/123 链接。',()=>{homeSearch='https://x.com/SpaceX/status/1600649710662213632';const h=homeHTML();homeSearch='';return h;});
+
+/* ---------- 解析页 ---------- */
+function resolveHTML(mode){ // mode: ok | parsing | failed | failedDownload
+  if(mode==='parsing') return `
+    <div class="nav-top"><button class="icon-btn" onclick="go('home')">${ic('back',20)}</button><span class="title">解析中</span></div>
+    <div class="center-state" data-note="R-04|解析中:明确当前动作与预期时长,消除「转圈焦虑」">
+      <span class="spin" style="width:34px;height:34px;border-width:3px"></span>
+      <h3>正在获取视频信息…</h3><p>通常只需几秒<br>完成后可直接选择清晰度</p></div>`;
+  if(mode==='failed'||mode==='failedDownload') return `
+    <div class="nav-top"><button class="icon-btn" onclick="go('home')">${ic('back',20)}</button><span class="title">解析失败</span></div>
+    <div class="center-state">
+      <span class="warn">${ic('warn',40)}</span>
+      <h3>解析失败</h3><p class="err-t">${mode==='failedDownload'?'下载中断:网络连接超时':'该推文没有视频,或内容不可见'}</p>
+      <div class="btns">
+        ${mode==='failedDownload'?`<button class="btn-fill" onclick="snack('继续下载,已恢复断点')">重试下载</button>`:''}
+        <button class="${mode==='failedDownload'?'btn-text':'btn-fill'}" onclick="go('resolve-parsing')">重新解析</button>
+      </div>
+      <p style="margin-top:14px;font-size:12px">失败原因会区分网络 / 磁盘 / 解析,便于判断下一步</p></div>`;
+  const q=QUALITIES[resolveSel];
+  return `
+    <div class="nav-top"><button class="icon-btn" onclick="go('home')">${ic('back',20)}</button><span class="title">选择清晰度</span></div>
+    <div id="screenarea2" style="flex:1;overflow-y:auto;padding-bottom:76px">
+      <div class="hero" data-note="R-05|Hero:16:9 封面 + 播放浮层 + 时长徽章 + 作者行 + 文案">
+        <div class="cover" style="background:linear-gradient(135deg,#1d3a55,#2b6fa5)">
+          <span class="play-ov">${ic('play',22)}</span><span class="dur">1:23</span></div>
+        <div class="hbody">
+          <div class="author"><span class="avatar">太</span><div><div class="nm">太空探索</div><div class="hd">@spacego</div></div></div>
+          <div class="txt">今晚的发射窗口天气完美,记录这个瞬间 🚀 一二级分离正常,整流罩已回收,更多细节稍后更新。</div>
+        </div></div>
+      <div class="qlist" data-note="R-01|清晰度卡片:HLS/MP4 格式徽章 + 「默认」徽章 + 按 码率×时长 预估大小">
+        ${QUALITIES.map((it,i)=>`<div class="qrow ${i===resolveSel?'sel':''}" onclick="selectQ(${i})">
+          <span class="radio"></span>
+          <div class="qmain"><div class="qname">${it.label} <span class="fmt">${it.fmt}</span>${it.def?'<span class="defbadge">默认</span>':''}</div>
+          <div class="qsub">码率 ${it.br} kbps</div></div>
+          <div class="qsize"><div class="s">${it.size}</div><div class="k">预估大小</div></div>
+        </div>`).join('')}
+      </div>
+    </div>
+    <div class="bottom-bar" data-note="R-02|底部固定下载栏:所选质量与预估大小始终可见,长列表不用滚动找按钮">
+      <div class="sum" id="resolveSum"><b>已选 ${q.label} ${q.fmt}</b>${q.size.replace('≈ ','约 ')} · 开始后可暂停/续传</div>
+      <button class="btn-primary" onclick="go('dlg-metered')" style="padding:12px 34px">下载</button>
+    </div>`;
+}
+view('resolve','pages','解析页 · 选择清晰度','清晰度卡片带格式/预估大小;底部固定下载栏。点击质量行可切换,点「下载」会演示移动网络确认弹窗。',()=>resolveHTML('ok'));
+view('resolve-parsing','pages','解析页 · 解析中','明确当前动作与预期时长(R-04)。',()=>resolveHTML('parsing'));
+view('resolve-failed','pages','解析页 · 解析失败','无已选地址时主按钮=重新解析(R-03)。',()=>resolveHTML('failed'));
+view('resolve-failed-dl','pages','解析页 · 下载失败','已有断点时主按钮=重试下载,次按钮=重新解析(R-03)。',()=>resolveHTML('failedDownload'));
+
+/* ---------- 播放页 ---------- */
+function playerHTML(mode){ // ok | error
+  return `<div class="player show-ui ${mode==='error'?'':'show-ui'}" id="playerRoot" onclick="if(event.target.closest('.p-top,.p-bottom,.play-err-card,.overlay,.sheet,.dlg'))return;this.classList.toggle('show-ui')">
+    <div class="video-area">
+      <div class="video-box">
+        ${mode==='error'?`
+          <div class="play-err-card" data-note="P-04|播放错误态:说明原因 + 重试/返回,不再是一行白字">
+            <span class="warn" style="display:inline-flex">${ic('warn',30)}</span>
+            <h3 style="font-size:16px;margin:10px 0 6px">视频无法播放</h3>
+            <p style="font-size:12.5px;color:var(--text2);line-height:1.5">文件可能已损坏或被系统清理</p>
+            <div class="btns" style="display:flex;gap:10px;justify-content:center;margin-top:16px">
+              <button class="btn-fill" onclick="event.stopPropagation();snack('已重试加载(原型演示)')">重试</button>
+              <button class="btn-text" onclick="event.stopPropagation();go('home')">返回</button>
+            </div></div>`
+        :`<span class="bigplay">${ic('play',26)}</span>`}
+      </div>
+    </div>
+    <div class="p-top" data-note="P-01|顶栏收敛:返回+标题+⋯;分享/复制/删除收进底部菜单,减少常驻遮挡">
+      <button class="icon-btn" onclick="go('home')">${ic('back',20)}</button>
+      <span class="ptitle">十年前 vs 现在的手机拍照对比</span>
+      <button class="icon-btn" onclick="event.stopPropagation();go('sheet-player-menu')">${ic('more',20)}</button>
+    </div>
+    ${mode==='error'?'':`<div class="p-bottom" data-note="P-02|底部控制条与顶栏一起随点击显隐,行为一致">
+      <div class="p-ctl">
+        <button class="icon-btn" onclick="event.stopPropagation();togglePlay(this)">${ic(playerPlaying?'pause':'play',22)}</button>
+        <span class="p-time">00:23 <span>/ 03:42</span></span>
+        <div class="p-progress"><div class="buf"></div><div class="played"></div><div class="knob"></div></div>
+        <button class="icon-btn" onclick="event.stopPropagation();snack('横竖屏/全屏切换(原型演示)')">${ic('maximize',18)}</button>
+      </div></div>`}
+  </div>`;
+}
+view('player','pages','播放页 · 播放中','点击画面可显示/隐藏控制条;顶栏 ⋯ 打开底部菜单(见「弹窗与浮层」)。',()=>playerHTML('ok'));
+view('player-error','pages','播放页 · 播放错误','错误原因 + 重试/返回(P-04)。',()=>playerHTML('error'));
+
+/* ---------- 设置页 ---------- */
+function settingsHTML(){
+  return `
+    <div class="nav-top"><button class="icon-btn" onclick="go('home')">${ic('back',20)}</button><span class="title">设置</span></div>
+    <div class="set-groups">
+      <div class="sgroup" data-note="S-01|分组卡片化:X 列表风格">
+        <div class="sec-label">下载</div>
+        <div class="srow" onclick="go('dlg-quality-sheet')">
+          <div class="s-main"><div class="s-t">默认清晰度</div><div class="s-d">每次解析时仍可单独选择</div></div>
+          <span style="font-size:13px;color:var(--text2)">${SET_QUALITIES[setQualitySel]}</span><span class="chev">${ic('chev',16)}</span></div>
+        <div class="srow" onclick="toggleWifi(this)">
+          <div class="s-main"><div class="s-t">仅 WiFi 下载</div><div class="s-d">移动网络下载前会先询问</div></div>
+          <span class="switch ${wifiOnly?'on':''}" id="wifiSwitch"></span></div>
+      </div>
+      <div class="sgroup">
+        <div class="sec-label">数据</div>
+        <div class="srow" onclick="go('dlg-clear')">
+          <div class="s-main"><div class="s-t">清空历史记录</div><div class="s-d">清空列表,不删除已下载的视频文件</div></div>
+          <span class="chev">${ic('chev',16)}</span></div>
+      </div>
+      <div class="sgroup">
+        <div class="sec-label">版本</div>
+        <div class="srow" onclick="checkUpdate(this)" data-note="S-03|版本行:整行可点检查更新,副标题显示状态(修复「当前版本行可点无反应」)">
+          <div class="s-main"><div class="s-t">检查更新</div><div class="s-d" id="updState">当前 v0.2.11 · <span class="state-ok">已是最新</span></div></div>
+          <span class="chev">${ic('refresh',16)}</span></div>
+        <div class="srow" onclick="snack('将在浏览器打开 GitHub 发布页(原型演示)')">
+          <div class="s-main"><div class="s-t">GitHub 发布页</div><div class="s-d">历史版本与更新说明</div></div>
+          <span class="chev">${ic('ext',16)}</span></div>
+      </div>
+      <div class="sgroup" data-note="S-05|关于区:保留版权与本地存储说明">
+        <div class="sec-label">关于</div>
+        <div class="about-txt">在 X 中分享链接即可下载视频,支持断点续传与多清晰度。下载仅限公开内容,请尊重创作者版权。所有数据仅保存在本机。</div>
+      </div>
+    </div>`;
+}
+view('settings','pages','设置页','分组卡片;清晰度改为 Bottom Sheet;检查更新整行可点带状态反馈(S-01~S-05)。',()=>settingsHTML());
+
+/* ---------- 弹窗与浮层 ---------- */
+const GROUP_D='dialogs';
+function dlg(html){return `<div class="overlay" onclick="if(event.target===this)go(baseOf())">${html}</div>`;}
+function sheet(html){return `<div class="sheet-mask" onclick="go(baseOf())"></div><div class="sheet">${html}</div>`;}
+function btnRow(left,right){return `<div class="dlg-btns">${left}${right}</div>`;}
+
+view('dlg-update',GROUP_D,'更新弹窗 · 发现新版本','全局弹窗(AppRoot 持有):版本号 + 更新内容 + 双 pill 按钮(稍后再说 / 立即更新)。',()=>homeHTML()+dlg(`
+  <div class="dlg"><h3>新版本 v0.3.0</h3>
+  <div class="dlg-body">全新深色界面与下载体验优化:<br>· 首页新增状态筛选与下载内联控制<br>· 清晰度选择支持预估大小<br>· 修复若干稳定性问题</div>
+  ${btnRow(`<button class="btn-text" onclick="go('home')">稍后再说</button>`,`<button class="btn-fill" onclick="go('dlg-update-dl')">立即更新</button>`)}</div>`));
+view('dlg-update-dl',GROUP_D,'更新弹窗 · 下载中','下载中弹窗不消失(B07):进度条 + 百分比 + 已下载/总大小;「取消下载」真实可点。',()=>homeHTML()+dlg(`
+  <div class="dlg"><h3>正在下载更新 v0.3.0</h3>
+  <div class="upd-prog"><div class="pbar"><i style="width:45%"></i></div>
+  <div class="plabel"><span>45% · 12.3MB / 27.4MB</span><span>约剩余 10s</span></div></div>
+  ${btnRow(`<button class="btn-text danger" onclick="go('home')">取消下载</button>`,`<button class="btn-fill disabled">下载中…</button>`)}</div>`));
+view('dlg-update-fail',GROUP_D,'更新弹窗 · 下载失败','失败原因保留在弹窗内,可一键重试(B07)。',()=>homeHTML()+dlg(`
+  <div class="dlg"><h3>更新下载失败</h3>
+  <div class="dlg-body"><span style="color:var(--red)">网络连接中断,文件不完整。</span><div class="sub-line">已下载 12.3MB / 27.4MB,重试将断点续传。</div></div>
+  ${btnRow(`<button class="btn-text" onclick="go('home')">稍后再说</button>`,`<button class="btn-fill" onclick="go('dlg-update-dl')">重试</button>`)}</div>`));
+view('dlg-metered',GROUP_D,'移动网络下载确认','解析页/首页共用同一确认模式;文案附预估大小。主操作=继续下载。',()=>resolveHTML('ok')+dlg(`
+  <div class="dlg"><h3>使用移动网络下载?</h3>
+  <div class="dlg-body">当前处于移动网络,且已开启「仅 WiFi 下载」。<br>继续将消耗约 <b style="color:var(--text)">53.9MB</b> 流量。</div>
+  ${btnRow(`<button class="btn-text" onclick="go('resolve')">取消</button>`,`<button class="btn-fill" onclick="go('resolve');snack('已开始下载 1080p · 约 53.9MB')">继续下载</button>`)}</div>`));
+view('dlg-file-missing',GROUP_D,'文件已丢失(首页)','点击已完成记录但文件不存在时:重新下载 / 删除记录,后果写清。',()=>homeHTML()+dlg(`
+  <div class="dlg"><h3>视频文件已丢失</h3>
+  <div class="dlg-body">「十年前 vs 现在的手机拍照对比」的本地文件已被删除或被系统清理,无法播放。</div>
+  ${btnRow(`<button class="btn-text danger" onclick="go('home');snack('记录已删除')">删除记录</button>`,`<button class="btn-fill" onclick="go('home');snack('已重新加入下载队列')">重新下载</button>`)}</div>`));
+view('dlg-notif-perm',GROUP_D,'通知权限前置说明','首次启动:先解释用途再拉系统弹窗(H-10),替代裸系统权限弹窗。',()=>homeHTML({empty:true,clip:false})+dlg(`
+  <div class="dlg"><h3>开启通知</h3>
+  <div class="dlg-body">下载进度与完成提醒需要通知权限。<div class="sub-line">不开启也可以正常下载,只是无法在通知栏看到进度。</div></div>
+  ${btnRow(`<button class="btn-text" onclick="go('home-empty')">暂不</button>`,`<button class="btn-fill" onclick="go('home-empty');snack('将拉起系统权限弹窗(原型演示)')">去开启</button>`)}</div>`));
+view('dlg-quality-sheet',GROUP_D,'设置 · 默认清晰度(Bottom Sheet)','选择型操作改用底部弹层(S-02):点选即生效 + 「完成」关闭;带说明文案。',()=>settingsHTML()+sheet(`
+  <div class="handle"></div><div class="sh-title">默认清晰度</div>
+  <div class="sh-desc">开始下载时默认使用的清晰度,每次解析时仍可单独选择</div>
+  ${SET_QUALITIES.map((q,i)=>`<button class="mi" onclick="setQualitySel=${i};go('dlg-quality-sheet')">
+    <span class="mi-ic">${i===setQualitySel?ic('check',18):'<span style="width:18px;display:inline-block"></span>'}</span>
+    <span class="mi-lbl" ${i===setQualitySel?'style="color:var(--blue);font-weight:700"':''}>${q}</span>
+    ${i===setQualitySel?'<span class="qchip">当前</span>':''}</button>`).join('')}
+  <div class="sh-btns"><button class="btn-fill" onclick="go('settings');snack('默认清晰度已设为 '+SET_QUALITIES[setQualitySel])">完成</button></div>`));
+view('dlg-clear',GROUP_D,'设置 · 清空历史确认','破坏性确认:红底主按钮 + 写明数量与后果(S-04)。',()=>settingsHTML()+dlg(`
+  <div class="dlg"><h3>清空全部下载记录?</h3>
+  <div class="dlg-body">将删除 <b style="color:var(--text)">7 条</b>下载记录。<div class="sub-line">已下载的视频文件会保留,不会从相册删除。</div></div>
+  ${btnRow(`<button class="btn-text" onclick="go('settings')">取消</button>`,`<button class="btn-fill danger" onclick="go('settings');snack('已清空 7 条记录')">清空</button>`)}</div>`));
+view('dlg-player-delete',GROUP_D,'播放页 · 删除确认','写明"会清理已保存到相册的文件"(与现有 deleteRecord 行为一致),红底主按钮(P-05)。',()=>playerHTML('ok')+dlg(`
+  <div class="dlg"><h3>删除这条视频?</h3>
+  <div class="dlg-body">将从记录中删除,并清理已保存到相册的文件。<div class="sub-line">此操作无法撤销。</div></div>
+  ${btnRow(`<button class="btn-text" onclick="go('player')">取消</button>`,`<button class="btn-fill danger" onclick="go('home');snack('已删除「十年前 vs 现在的手机拍照对比」')">删除</button>`)}</div>`));
+view('sheet-player-menu',GROUP_D,'播放页 · ⋯ 底部菜单','分享/复制/删除收进底部弹层(P-01);复制后给出 Snackbar 反馈(P-03)。',()=>playerHTML('ok')+sheet(`
+  <div class="handle"></div>
+  <div class="sh-title" style="font-size:14px;color:var(--text2);font-weight:600">十年前 vs 现在的手机拍照对比</div>
+  <button class="mi" onclick="go('player');snack('已调起系统分享(原型演示)')"><span class="mi-ic">${ic('share',19)}</span><span class="mi-lbl">分享视频</span></button>
+  <button class="mi" onclick="go('player');snack('链接已复制')"><span class="mi-ic">${ic('copy',19)}</span><span class="mi-lbl">复制推文链接</span></button>
+  <div class="divider" style="height:1px;background:var(--border);margin:4px 20px"></div>
+  <button class="mi danger" onclick="go('dlg-player-delete')"><span class="mi-ic">${ic('trash',19)}</span><span class="mi-lbl">删除视频</span></button>`));
+view('menu-card',GROUP_D,'首页 · 记录卡 ⋯ 菜单','按状态给菜单项;图标语义修正(复制链接=copy,H-06);删除红色置底,走可撤销流程。',()=>{openMenuId='r2';const h=homeHTML();openMenuId=null;return h;});
+
+/* ---------- 系统界面 ---------- */
+view('sys-notif','system','通知栏设计','下载中(进度+暂停/取消)、完成(播放)、失败(原因+重试);并发下载按 recordId 分通知 id。',()=>`
+  <div class="notif-shade">
+    <div class="shade-title">通知 · X 下载助手</div>
+    <div class="notif"><div class="nhead"><span class="appic">${ic('download',10)}</span>X 下载助手<span class="expand">${ic('chev',14)}</span></div>
+      <div class="ntitle">正在下载「小猫第一次见到雪…」</div><div class="ntext">68% · 12.3 / 14.3MB</div>
+      <div class="npbar"><i style="width:68%"></i></div>
+      <div class="nacts"><span class="nact" onclick="snack('通知动作:暂停(原型演示)')">暂停</span><span class="nact" onclick="snack('通知动作:取消(原型演示)')">取消</span></div></div>
+    <div class="notif"><div class="nhead"><span class="appic" style="background:var(--green)">${ic('check',10)}</span>X 下载助手</div>
+      <div class="ntitle">下载完成「现场版《海阔天空》…」</div><div class="ntext">1080p · 38.2MB · 已保存到相册</div>
+      <div class="nacts"><span class="nact" onclick="go('player')">播放</span></div></div>
+    <div class="notif"><div class="nhead"><span class="appic" style="background:var(--red)">${ic('warn',10)}</span>X 下载助手</div>
+      <div class="ntitle">下载失败「这就是最近的通勤现状」</div><div class="ntext">网络连接中断,已保留 42% 进度</div>
+      <div class="nacts"><span class="nact" onclick="snack('通知动作:重试(原型演示)')">重试</span></div></div>
+  </div>`);
+view('sys-snack','system','Snackbar 规范','深灰 pill + 蓝色动作;删除类操作"即删+撤销"不弹确认(H-05/H-09)。示例:左滑删除后的撤销条。',()=>{const h=homeHTML();setTimeout(()=>snack('已删除「这就是最近的通勤现状」','撤销',()=>{deletedIds.delete('r5');go(curView);}),350);return h;});
+
+/* ================= 交互逻辑 ================= */
+function baseOf(){ // 弹窗视图的底板
+  const b={'dlg-update':'home','dlg-update-dl':'home','dlg-update-fail':'home','dlg-metered':'resolve',
+    'dlg-file-missing':'home','dlg-notif-perm':'home-empty','dlg-quality-sheet':'settings','dlg-clear':'settings',
+    'dlg-player-delete':'player','sheet-player-menu':'player','menu-card':'home'};
+  return b[curView]||'home';
+}
+function go(id){ curView=id; openMenuId = id==='menu-card'?'r2':null; render(); }
+function render(){
+  const v=VIEWS[curView];
+  document.getElementById('viewTitle').textContent=v.title;
+  document.getElementById('viewDesc').textContent=v.desc;
+  const area=document.getElementById('screenarea');
+  area.style.overflowY='hidden'; area.innerHTML=v.render();
+  area.style.overflowY='auto';
+  if(document.getElementById('listArea')) refreshList();
+  document.querySelectorAll('.side-item').forEach(el=>el.classList.toggle('active',el.dataset.view===curView));
+  applyNotes();
+}
+function applyNotes(){
+  document.querySelectorAll('[data-note]').forEach(el=>{
+    if(!notesOn || !el.dataset.note) return;
+    if(el.querySelector(':scope > .note-dot')) return;
+    el.classList.add('has-note');
+    const d=document.createElement('span');
+    d.className='note-dot';
+    const parts=el.dataset.note.split('|');
+    d.textContent=parts[0]; d.dataset.tip=parts[1]||'';
+    el.appendChild(d);
+  });
+}
+document.getElementById('noteToggle').addEventListener('change',e=>{notesOn=e.target.checked;render();});
+
+/* 侧栏构建 */
+function buildNav(){
+  const groups={pages:'nav-pages',dialogs:'nav-dialogs',system:'nav-system'};
+  Object.entries(groups).forEach(([g,elId])=>{
+    document.getElementById(elId).innerHTML=Object.values(VIEWS).filter(v=>v.group===g)
+      .map(v=>`<button class="side-item" data-view="${v.id}" onclick="go('${v.id}')"><span class="t">${v.title}</span><span class="d">${v.desc.split(';')[0].split('。')[0]}</span></button>`).join('');
+  });
+}
+
+/* 首页交互 */
+function setFilter(f){filter=f;curView='home';document.querySelectorAll('.chip').forEach((c,i)=>c.classList.toggle('on',CATS[i][0]===f));refreshList();}
+function onSearchInput(v){
+  homeSearch=v;
+  const wrap=document.querySelector('.search-wrap');
+  const isLink=LINK_RE.test(v);
+  wrap.classList.toggle('is-link',isLink);
+  wrap.classList.toggle('has-text',!!v&&!isLink);
+  if(curView==='home') refreshList();
+}
+function toggleMenu(id){openMenuId = openMenuId===id?null:id;render();}
+function closeMenu(){openMenuId=null;render();}
+function delCard(id,msgPrefix){
+  deletedIds.add(id);openMenuId=null;render();
+  const rec=RECORDS.find(r=>r.id===id);
+  snack(msgPrefix||('已删除「'+(rec?rec.title.slice(0,10):'')+'…」'),'撤销',()=>{deletedIds.delete(id);render();});
+}
+document.addEventListener('click',e=>{ // 点击空白关闭菜单
+  if(openMenuId && !e.target.closest('.menu') && !e.target.closest('.icon-btn')){openMenuId=null;render();}
+});
+
+/* 左滑删除 H-05 */
+let drag=null,lastDragEnd=0;
+document.addEventListener('pointerdown',e=>{
+  const card=e.target.closest('.card'); if(!card) return;
+  if(e.target.closest('.menu,.icon-btn,.mini-pill,.ctrl-btn,button')) return;
+  drag={card,x:e.clientX,dx:0,moved:false};
+  card.classList.add('dragging');
+});
+document.addEventListener('pointermove',e=>{
+  if(!drag) return;
+  drag.dx=e.clientX-drag.x;
+  if(Math.abs(drag.dx)>6) drag.moved=true;
+  if(drag.dx<0) drag.card.querySelector('.card-inner').style.transform=`translateX(${drag.dx}px)`;
+});
+document.addEventListener('pointerup',()=>{
+  if(!drag) return;
+  const {card,dx}=drag; drag=null;
+  card.classList.remove('dragging');
+  if(Math.abs(dx)>20) lastDragEnd=Date.now();
+  const inner=card.querySelector('.card-inner');
+  if(dx<-90){
+    inner.style.transform='translateX(-440px)';inner.style.opacity='0';
+    const id=card.dataset.id;
+    setTimeout(()=>{deletedIds.add(id);
+      const rec=RECORDS.find(r=>r.id===id);
+      render();
+      snack('已删除「'+(rec?rec.title.slice(0,10):'')+'…」','撤销',()=>{deletedIds.delete(id);render();});
+    },180);
+  }else{ inner.style.transform=''; inner.style.opacity=''; }
+});
+
+/* 卡片点击:按状态导航(DONE→播放;READY/PARSING/FAILED→解析页;其余提示用内联控件) */
+function cardClick(id,st){
+  if(Date.now()-lastDragEnd<300) return; // 左滑后不误触
+  if(st==='done') return go('player');
+  if(st==='ready') return go('resolve');
+  if(st==='parsing') return go('resolve-parsing');
+  if(st==='failed') return go('resolve-failed-dl');
+  snack('下载任务在卡片上可直接暂停/继续');
+}
+
+/* 解析页交互 */
+function selectQ(i){
+  resolveSel=i;
+  document.querySelectorAll('.qrow').forEach((el,idx)=>el.classList.toggle('sel',idx===i));
+  const q=QUALITIES[i], sum=document.getElementById('resolveSum');
+  if(sum) sum.innerHTML=`<b>已选 ${q.label} ${q.fmt}</b>${q.size.replace('≈ ','约 ')} · 开始后可暂停/续传`;
+}
+
+/* 播放页交互 */
+function togglePlay(btn){
+  playerPlaying=!playerPlaying;
+  btn.innerHTML=ic(playerPlaying?'pause':'play',22);
+}
+
+/* 设置页交互 */
+function toggleWifi(el){wifiOnly=!wifiOnly;el.querySelector('.switch').classList.toggle('on',wifiOnly);snack(wifiOnly?'已开启仅 WiFi 下载':'已关闭仅 WiFi 下载,移动网络将直接下载');}
+function checkUpdate(row){
+  const st=document.getElementById('updState');
+  st.innerHTML='检查中…';
+  setTimeout(()=>{st.innerHTML='当前 v0.2.11 · <span class="state-ok">已是最新</span>';snack('已是最新版本 v0.2.11');},1200);
+}
+
+/* Snackbar */
+let snackTimer=null;
+function snack(text,action,cb){
+  document.querySelectorAll('.snack').forEach(s=>s.remove());
+  const el=document.createElement('div');el.className='snack';
+  el.innerHTML=`<span class="txt">${text}</span>${action?`<button class="act">${action}</button>`:''}`;
+  if(action) el.querySelector('.act').onclick=()=>{el.remove();cb&&cb();};
+  document.getElementById('screen').appendChild(el);
+  clearTimeout(snackTimer);
+  snackTimer=setTimeout(()=>el.remove(),4000);
+}
+
+/* 启动 */
+buildNav();
+render();
+</script>
+</body>
+</html>
