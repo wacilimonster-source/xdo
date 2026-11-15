@@ -2,5 +2,5 @@
   "versionCode": 23,
   "versionName": "0.3.0",
   "updateMessage": "全新深色界面（X 风格）与交互升级：首页状态筛选与下载内联控制、清晰度预估大小、滑动删除可撤销、播放页操作收敛、设置页改版；修复更新下载无法取消的问题。",
-  "apkUrl": "https://github.com/wacilimonster-source/xdo.git/releases/download/v0.3.0/xdo_v0.3.0.apk"
+  "apkUrl": "https://github.com/wacilimonster-source/xdo/releases/download/v0.3.0/xdo_v0.3.0.apk"
 }
