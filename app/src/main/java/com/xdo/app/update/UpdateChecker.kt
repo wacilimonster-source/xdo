@@ -28,6 +28,13 @@ sealed class UpdateState {
         val totalBytes: Long = 0L,
     ) : UpdateState()
     data class DownloadFailed(val reason: String) : UpdateState()
+
+    /**
+     * 安装被系统权限拦截（「安装未知应用」未开启）。
+     * APK 已下载并校验签名，弹窗引导用户去系统设置开启；回到应用后自动继续安装，
+     * 不需要重新下载。
+     */
+    data class InstallBlocked(val reason: String) : UpdateState()
 }
 
 /** 检查更新：读取仓库 version.txt 并与本地版本比对 */

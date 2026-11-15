@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.xdo.app.dl.AppPrefsHolder
 import kotlinx.coroutines.CoroutineScope
@@ -77,6 +78,7 @@ object UpdateManager {
     }
 
     fun reset() {
+        pendingApk = null
         _state.value = UpdateState.Idle
     }
 
@@ -91,7 +93,54 @@ object UpdateManager {
         downloadCancelled = true
         downloadJob?.cancel()
         downloadJob = null
+        pendingApk = null
         _state.value = UpdateState.Idle
+    }
+
+    /** 已下载并通过签名校验、等待「安装未知应用」权限的 APK（权限开启后无需重新下载） */
+    @Volatile
+    private var pendingApk: File? = null
+
+    /**
+     * 「去开启」：跳转系统设置中本应用的「安装未知应用」开关页
+     * （Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES 直达该应用的开关，不用用户自己找）。
+     */
+    fun openInstallPermissionSettings() {
+        val context = app()
+        val intent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}"),
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
+    }
+
+    /**
+     * 从系统设置回到应用后（ON_RESUME）调用：权限已开启则直接安装已下载的 APK，
+     * 不重新下载；仍未开启则保持 InstallBlocked 等待；APK 已丢失则重新下载。
+     */
+    fun continueInstall() {
+        if (_state.value !is UpdateState.InstallBlocked) return
+        val apk = pendingApk
+        if (apk == null || !apk.exists()) {
+            val info = _lastAvailable.value
+            if (info != null) downloadAndInstall(info) else reset()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 26 && !app().packageManager.canRequestPackageInstalls()) return
+        pendingApk = null
+        _state.value = if (installApk(apk)) UpdateState.Idle
+        else UpdateState.DownloadFailed("无法启动安装器，请重试")
+    }
+
+    /** 拉起系统安装器；返回是否成功启动 */
+    private fun installApk(apk: File): Boolean {
+        val context = app()
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return runCatching { context.startActivity(intent) }.isSuccess
     }
 
     /** 下载并安装更新（进度实时写入全局状态，任何页面都可看到） */
@@ -122,21 +171,14 @@ object UpdateManager {
                 return@launch
             }
 
-            // B32：未授予「安装未知应用」权限时给出明确提示，而不是静默失败
+            // 权限缺失：保留已下载并校验过的 APK，进入引导态（去系统设置开启后自动续装）
             if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
-                _state.value = UpdateState.DownloadFailed(
-                    "请先在系统设置中允许本应用「安装未知应用」，然后重试"
-                )
+                pendingApk = apk
+                _state.value = UpdateState.InstallBlocked("需要允许「安装未知应用」才能安装新版本")
                 return@launch
             }
 
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apk)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            val started = runCatching { context.startActivity(intent) }.isSuccess
-            _state.value = if (started) UpdateState.Idle
+            _state.value = if (installApk(apk)) UpdateState.Idle
             else UpdateState.DownloadFailed("无法启动安装器，请重试")
         }
     }

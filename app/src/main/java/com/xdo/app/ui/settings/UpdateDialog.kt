@@ -37,6 +37,7 @@ fun UpdateDialog(
     state: UpdateState,
     onDownload: () -> Unit,
     onCancelDownload: () -> Unit,
+    onOpenInstallSettings: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -50,6 +51,7 @@ fun UpdateDialog(
                 when (state) {
                     is UpdateState.Downloading -> "正在下载更新 v${info.versionName}"
                     is UpdateState.DownloadFailed -> "更新下载失败"
+                    is UpdateState.InstallBlocked -> "需要开启安装权限"
                     else -> "新版本 v${info.versionName}"
                 },
                 fontSize = 17.sp,
@@ -58,8 +60,19 @@ fun UpdateDialog(
         },
         text = {
             Column {
-                if (state !is UpdateState.Downloading) {
-                    Text(info.updateMessage)
+                if (state is UpdateState.InstallBlocked) {
+                    // 安装权限引导：写清下一步发生什么（跳设置开关页 → 回来自动续装，不重下）
+                    Text("安装新版本需要允许本应用「安装未知应用」权限。")
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "点击「去开启」会直接跳到系统设置中的开关页；开启后回到应用会自动继续安装，已下载的安装包不会作废。",
+                        style = Material3Small,
+                        color = XColors.Text2,
+                    )
+                } else {
+                    if (state !is UpdateState.Downloading) {
+                        Text(info.updateMessage)
+                    }
                 }
                 if (state is UpdateState.Downloading) {
                     Spacer(Modifier.height(10.dp))
@@ -96,6 +109,8 @@ fun UpdateDialog(
                     onClick = {},
                     enabled = false,
                 ) { Text("下载中…", color = XColors.Text2) }
+                is UpdateState.InstallBlocked ->
+                    UpdatePrimaryButton("去开启", XColors.Blue) { onOpenInstallSettings() }
                 is UpdateState.DownloadFailed ->
                     UpdatePrimaryButton("重试", XColors.Blue) { onDownload() }
                 else ->

@@ -44,15 +44,31 @@ fun AppRoot(onOpenSettings: () -> Unit = {}) {
     val updateInfo = (updateState as? UpdateState.Available)?.info ?: lastUpdateInfo
     val showUpdateDialog = updateState is UpdateState.Available ||
         updateState is UpdateState.Downloading ||
-        updateState is UpdateState.DownloadFailed
+        updateState is UpdateState.DownloadFailed ||
+        updateState is UpdateState.InstallBlocked
     if (showUpdateDialog && updateInfo != null) {
         UpdateDialog(
             info = updateInfo,
             state = updateState,
             onDownload = { UpdateManager.downloadAndInstall(updateInfo) },
             onCancelDownload = { UpdateManager.cancelDownload() },
+            onOpenInstallSettings = { UpdateManager.openInstallPermissionSettings() },
             onDismiss = { UpdateManager.reset() },
         )
+    }
+
+    // 安装权限引导闭环：从系统设置回到应用时（ON_RESUME），权限已开启则自动继续安装已下载的 APK
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, updateState) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME &&
+                updateState is UpdateState.InstallBlocked
+            ) {
+                UpdateManager.continueInstall()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // 分享/粘贴链接进来 → 解析并跳解析页
