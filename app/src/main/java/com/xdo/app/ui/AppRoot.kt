@@ -50,6 +50,7 @@ fun AppRoot(onOpenSettings: () -> Unit = {}) {
             info = updateInfo,
             state = updateState,
             onDownload = { UpdateManager.downloadAndInstall(updateInfo) },
+            onCancelDownload = { UpdateManager.cancelDownload() },
             onDismiss = { UpdateManager.reset() },
         )
     }

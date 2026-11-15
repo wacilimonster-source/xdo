@@ -18,6 +18,9 @@ interface RecordDao {
     @Query("SELECT * FROM records WHERE id = :id")
     suspend fun getById(id: Long): DownloadRecord?
 
+    @Query("SELECT COUNT(*) FROM records")
+    suspend fun count(): Int
+
     @Query("SELECT * FROM records WHERE sourceUrl = :url LIMIT 1")
     suspend fun findBySourceUrl(url: String): DownloadRecord?
 

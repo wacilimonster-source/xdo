@@ -190,6 +190,7 @@ class DownloadManager(
     }
 
     private fun clearProgress(recordId: Long) {
+        DownloadSpeed.clear(recordId)
         val removed = synchronized(progressMap) { progressMap.remove(recordId) } != null
         if (removed) DownloadService.refresh(context)
     }
@@ -418,6 +419,9 @@ class DownloadManager(
             raf.seek(start)
             val buf = ByteArray(CHUNK)
             var lastNotify = 0L
+            // H-03：瞬时速度/剩余时间上报（与进度节流同步，150ms 一拍）
+            var lastSpeedTick = 0L
+            var lastSpeedBytes = start
             body.byteStream().use { input ->
                 while (true) {
                     val n = input.read(buf, 0, buf.size)
@@ -434,6 +438,17 @@ class DownloadManager(
                             fileSize = written.takeIf { total > 0 },
                         ))
                         notifyProgress(rec.id, title, pct)
+                        val dt = now - lastSpeedTick
+                        if (lastSpeedTick == 0L) {
+                            lastSpeedTick = now
+                            lastSpeedBytes = written
+                        } else if (dt > 0) {
+                            val bps = (written - lastSpeedBytes) * 1000 / dt
+                            val eta = if (total > 0 && bps > 0) (total - written) / bps else null
+                            DownloadSpeed.report(rec.id, bps, eta)
+                            lastSpeedTick = now
+                            lastSpeedBytes = written
+                        }
                     }
                 }
             }

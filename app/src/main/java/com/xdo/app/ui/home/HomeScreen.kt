@@ -1,9 +1,14 @@
 package com.xdo.app.ui.home
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,13 +23,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Cancel
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -32,25 +40,31 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -58,26 +72,61 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
-import com.xdo.app.R
+import com.xdo.app.PermissionBridge
 import com.xdo.app.data.DownloadRecord
 import com.xdo.app.data.RecordStatus
+import com.xdo.app.dl.AppPrefsHolder
+import com.xdo.app.dl.AppUtil
+import com.xdo.app.dl.DownloadSpeed
+import com.xdo.app.ui.components.IconCircle
+import com.xdo.app.ui.components.MiniPill
+import com.xdo.app.ui.components.MiniSpinner
+import com.xdo.app.ui.components.QChip
+import com.xdo.app.ui.components.XFilterChip
+import com.xdo.app.ui.components.XSnackbarHost
+import com.xdo.app.ui.components.formatBytes
+import com.xdo.app.ui.components.formatDuration
+import com.xdo.app.ui.components.formatEta
+import com.xdo.app.ui.components.formatSpeed
+import com.xdo.app.ui.components.recordTitle
+import com.xdo.app.ui.components.timeLabel
+import com.xdo.app.ui.theme.XColors
 import com.xdo.app.util.TweetLink
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
+// 状态筛选分组（H-02）：进行中 = 解析/待选清晰度/下载中/已暂停
+private val CATS = listOf(
+    "all" to "全部",
+    "active" to "进行中",
+    "done" to "已完成",
+    "failed" to "失败",
+)
+
+private fun statusGroup(status: Int): String = when (status) {
+    RecordStatus.DONE -> "done"
+    RecordStatus.FAILED -> "failed"
+    else -> "active"
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     viewModel: HomeViewModel,
@@ -86,79 +135,196 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
 ) {
     val records by viewModel.records.collectAsState()
+    val deletingIds by viewModel.deletingIds.collectAsState()
     val clipboard by viewModel.clipboardLink.collectAsState()
+    val speeds by DownloadSpeed.state.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
+
     var search by remember { mutableStateOf("") }
+    var filter by remember { mutableStateOf("all") }
     var fileDeletedRecord by remember { mutableStateOf<DownloadRecord?>(null) }
     // B21：仅 WiFi 下点「继续」先确认是否使用流量
     var confirmResume by remember { mutableStateOf<DownloadRecord?>(null) }
-    val context = androidx.compose.ui.platform.LocalContext.current
+    // H-10：通知权限前置说明（首启一次）
+    var showNotifPrompt by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.checkClipboard()
         viewModel.maybeBackfillMeta()
         viewModel.snack.collect { snackbarHostState.showSnackbar(it) }
     }
+    LaunchedEffect(Unit) {
+        val prefs = AppPrefsHolder.get(context)
+        val granted = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(
+            context, Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted && !prefs.notifPromptAnswered) showNotifPrompt = true
+    }
 
-    val filtered = remember(records, search) {
-        if (search.isBlank()) records
-        else records.filter {
-            it.text.contains(search, true) ||
-                it.handle.contains(search, true) ||
-                it.authorName.contains(search, true)
+    /** H-05：删除 = 立即从列表消失 + 底部 Snackbar 可撤销（5s 后才真正删库删文件） */
+    fun requestUndoDelete(record: DownloadRecord) {
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        viewModel.deleteRecordWithUndo(record)
+        scope.launch {
+            val r = snackbarHostState.showSnackbar(
+                "已删除「${recordTitle(record)}」",
+                actionLabel = "撤销",
+                duration = SnackbarDuration.Short,
+            )
+            if (r == SnackbarResult.ActionPerformed) viewModel.undoDelete(record.id)
         }
     }
 
+    fun handleCardClick(record: DownloadRecord) {
+        when (record.status) {
+            RecordStatus.DONE -> {
+                // B26：文件检查移到后台线程，不再阻塞点击回调
+                viewModel.isFileDeletedAsync(record) { deleted ->
+                    if (deleted) fileDeletedRecord = record
+                    else onOpenPlayer(record.id)
+                }
+            }
+            RecordStatus.READY,
+            RecordStatus.PARSING,
+            RecordStatus.FAILED,
+            -> onOpenResolve(record.id)
+            else -> scope.launch {
+                snackbarHostState.showSnackbar("任务进行中，可直接在卡片上暂停 / 继续")
+            }
+        }
+    }
+
+    val aliveRecords = remember(records, deletingIds) {
+        records.filter { it.id !in deletingIds }
+    }
+    val counts = remember(aliveRecords) {
+        mapOf(
+            "all" to aliveRecords.size,
+            "active" to aliveRecords.count { statusGroup(it.status) == "active" },
+            "done" to aliveRecords.count { statusGroup(it.status) == "done" },
+            "failed" to aliveRecords.count { statusGroup(it.status) == "failed" },
+        )
+    }
+    val filtered = remember(aliveRecords, search, filter) {
+        aliveRecords
+            .filter { r ->
+                search.isBlank() || r.text.contains(search, true) ||
+                    r.handle.contains(search, true) ||
+                    r.authorName.contains(search, true)
+            }
+            .filter { r -> filter == "all" || statusGroup(r.status) == filter }
+    }
+    val isLink = TweetLink.looksLikeTweetText(search)
+
     Scaffold(
+        containerColor = XColors.Bg,
         topBar = {
             TopAppBar(
-                title = { Text("X 下载助手") },
+                title = { Text("X 下载助手", fontSize = 19.sp, fontWeight = FontWeight.Bold) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = XColors.Bg),
                 actions = {
                     IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "设置")
+                        Icon(Icons.Filled.Settings, contentDescription = "设置", tint = XColors.Text)
                     }
                 },
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) },
+        snackbarHost = { XSnackbarHost(snackbarHostState) },
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            SearchBar(
+            SearchField(
                 value = search,
                 onChange = { search = it },
-                showResolveButton = TweetLink.looksLikeTweetText(search),
+                isLink = isLink,
                 onResolve = {
                     val text = search
                     search = ""
                     viewModel.paste(text)
                 },
             )
-            clipboard?.let { text ->
-                ClipboardBanner(
-                    onClick = { viewModel.paste(text) },
-                    onDismiss = { viewModel.dismissClipboard() },
-                )
+
+            if (aliveRecords.isNotEmpty()) {
+                // H-02：状态筛选 chips
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CATS.forEach { (key, label) ->
+                        XFilterChip(
+                            label = label,
+                            count = counts[key] ?: 0,
+                            selected = filter == key,
+                            onClick = { filter = key },
+                        )
+                    }
+                }
             }
-            if (filtered.isEmpty()) {
-                // B33：区分「无记录」与「搜索无结果」
-                EmptyState(hasSearch = search.isNotBlank())
-            } else {
-                LazyColumn(
+
+            // H-07：剪贴板检测条
+            AnimatedVisibility(visible = clipboard != null) {
+                Surface(
+                    color = XColors.BlueDim,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, XColors.Blue.copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Filled.Link,
+                            null,
+                            tint = XColors.Blue,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            "检测到剪贴板中的 X 链接",
+                            color = Color(0xFFA8D5F5),
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        MiniPill("解析", filled = true) { clipboard?.let { viewModel.paste(it) } }
+                        IconButton(onClick = { viewModel.dismissClipboard() }) {
+                            Icon(Icons.Filled.Close, "忽略", tint = XColors.Text2, modifier = Modifier.size(15.dp))
+                        }
+                    }
+                }
+            }
+
+            when {
+                // 链接态不显示"搜索无结果"，给解析指引
+                isLink && filtered.isEmpty() -> LinkInputHint()
+                filtered.isEmpty() && search.isNotBlank() -> EmptySearchResult(
+                    keyword = search,
+                    onClear = { search = "" },
+                )
+                filtered.isEmpty() -> EmptyGuide()
+                else -> LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        start = 16.dp, end = 16.dp, bottom = 16.dp,
+                        start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(filtered, key = { it.id }) { record ->
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { value ->
                                 if (value == SwipeToDismissBoxValue.StartToEnd) {
-                                    viewModel.deleteRecord(record)
+                                    requestUndoDelete(record)
                                     true
                                 } else {
                                     false
@@ -170,74 +336,72 @@ fun HomeScreen(
                             enableDismissFromStartToEnd = true,
                             enableDismissFromEndToStart = false,
                             backgroundContent = {
+                                // H-05：X 风格红色 15% 底 + 删除图标
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(MaterialTheme.colorScheme.errorContainer),
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(XColors.RedDim),
                                     contentAlignment = Alignment.CenterStart,
                                 ) {
                                     Icon(
                                         Icons.Filled.Delete,
                                         "删除",
-                                        tint = MaterialTheme.colorScheme.onErrorContainer,
-                                        modifier = Modifier.padding(start = 20.dp),
+                                        tint = XColors.Red,
+                                        modifier = Modifier.padding(start = 20.dp).size(22.dp),
                                     )
                                 }
                             },
                         ) {
                             RecordCard(
                                 record = record,
-                                onClick = {
-                                    when (record.status) {
-                                        RecordStatus.DONE -> {
-                                            // B26：文件检查移到后台线程，不再阻塞点击回调
-                                            viewModel.isFileDeletedAsync(record) { deleted ->
-                                                if (deleted) fileDeletedRecord = record
-                                                else onOpenPlayer(record.id)
-                                            }
-                                        }
-                                        RecordStatus.READY,
-                                        RecordStatus.PARSING,
-                                        RecordStatus.FAILED,
-                                        -> onOpenResolve(record.id)
-                                        else -> Unit
-                                    }
-                                },
+                                speed = speeds[record.id],
+                                onClick = { handleCardClick(record) },
                                 onContinueRequest = { rec ->
                                     val needConfirm =
-                                        com.xdo.app.dl.AppPrefsHolder.get(context).wifiOnly &&
-                                            com.xdo.app.dl.AppUtil.isMetered(context)
+                                        AppPrefsHolder.get(context).wifiOnly &&
+                                            AppUtil.isMetered(context)
                                     if (needConfirm) confirmResume = rec
                                     else viewModel.startOrResume(rec)
                                 },
+                                onDelete = { requestUndoDelete(record) },
                                 viewModel = viewModel,
+                                onPlay = { handleCardClick(record) },
+                                onOpenResolve = { onOpenResolve(record.id) },
                             )
-}
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // 本地文件被删除时弹窗：可重新下载或删除记录
+    // 本地文件被删除时弹窗：可重新下载或删除记录（后果写明，主操作=重新下载）
     fileDeletedRecord?.let { rec ->
         AlertDialog(
             onDismissRequest = { fileDeletedRecord = null },
-            title = { Text("文件已删除") },
-            text = { Text("该视频的本地文件已被删除，无法播放。要重新下载还是删除记录？") },
+            containerColor = XColors.Surface,
+            titleContentColor = XColors.Text,
+            textContentColor = Color(0xFFCFD3D7),
+            title = { Text("视频文件已丢失") },
+            text = { Text("「${recordTitle(rec)}」的本地文件已被删除或被系统清理，无法播放。") },
             confirmButton = {
-                TextButton(onClick = {
-                    viewModel.reprepareDownload(rec)
-                    fileDeletedRecord = null
-                }) {
-                    Text("重新下载")
-                }
+                Button(
+                    onClick = {
+                        viewModel.reprepareDownload(rec)
+                        fileDeletedRecord = null
+                    },
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(containerColor = XColors.Blue),
+                ) { Text("重新下载") }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    viewModel.deleteRecord(rec)
-                    fileDeletedRecord = null
-                }) {
-                    Text("删除记录")
-                }
+                TextButton(
+                    onClick = {
+                        viewModel.deleteRecord(rec)
+                        fileDeletedRecord = null
+                    },
+                ) { Text("删除记录", color = XColors.Red) }
             },
         )
     }
@@ -246,91 +410,174 @@ fun HomeScreen(
     confirmResume?.let { rec ->
         AlertDialog(
             onDismissRequest = { confirmResume = null },
+            containerColor = XColors.Surface,
+            titleContentColor = XColors.Text,
+            textContentColor = Color(0xFFCFD3D7),
             title = { Text("使用移动网络下载？") },
-            text = { Text("当前为移动网络且已开启「仅 WiFi 下载」。是否使用流量继续下载？") },
+            text = { Text("当前为移动网络且已开启「仅 WiFi 下载」。继续下载将消耗流量。") },
             confirmButton = {
-                TextButton(onClick = {
-                    confirmResume = null
-                    viewModel.startOrResume(rec, force = true)
-                }) {
-                    Text("继续下载")
-                }
+                Button(
+                    onClick = {
+                        confirmResume = null
+                        viewModel.startOrResume(rec, force = true)
+                    },
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(containerColor = XColors.Blue),
+                ) { Text("继续下载") }
             },
             dismissButton = {
-                TextButton(onClick = { confirmResume = null }) { Text("取消") }
+                TextButton(onClick = { confirmResume = null }) { Text("取消", color = XColors.Text2) }
+            },
+        )
+    }
+
+    // H-10：通知权限前置说明（替代裸系统弹窗；问过一次后不再打扰）
+    if (showNotifPrompt) {
+        AlertDialog(
+            onDismissRequest = { showNotifPrompt = false },
+            containerColor = XColors.Surface,
+            titleContentColor = XColors.Text,
+            textContentColor = Color(0xFFCFD3D7),
+            title = { Text("开启通知") },
+            text = {
+                Text("下载进度与完成提醒需要通知权限。\n\n不开启也可以正常下载，只是无法在通知栏看到进度。")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        AppPrefsHolder.get(context).notifPromptAnswered = true
+                        showNotifPrompt = false
+                        PermissionBridge.requestNotif?.invoke()
+                    },
+                    shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(containerColor = XColors.Blue),
+                ) { Text("去开启") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    AppPrefsHolder.get(context).notifPromptAnswered = true
+                    showNotifPrompt = false
+                }) { Text("暂不", color = XColors.Text2) }
             },
         )
     }
 }
-        }
-    }
-}
+
+// ------------------------------------------------------------
+// H-01：搜索/解析双模式输入框
+// ------------------------------------------------------------
 
 @Composable
-private fun SearchBar(
+private fun SearchField(
     value: String,
     onChange: (String) -> Unit,
-    showResolveButton: Boolean,
+    isLink: Boolean,
     onResolve: () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        androidx.compose.material3.OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
-            placeholder = { Text("搜索标题 / 作者，或粘贴 X 链接解析") },
-            leadingIcon = { Icon(Icons.Filled.Search, null) },
-            trailingIcon = {
-                if (showResolveButton) {
-                    IconButton(onClick = onResolve) {
-                        Icon(Icons.Filled.Download, "解析链接")
-                    }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        placeholder = {
+            Text("搜索记录，或粘贴 X 链接", color = XColors.Text2, fontSize = 13.sp)
+        },
+        leadingIcon = {
+            Icon(Icons.Filled.Search, null, tint = XColors.Text2, modifier = Modifier.size(19.dp))
+        },
+        trailingIcon = {
+            when {
+                isLink -> MiniPill("解析", filled = true, onClick = onResolve)
+                value.isNotEmpty() -> IconButton(onClick = { onChange("") }) {
+                    Icon(Icons.Filled.Close, "清除", tint = XColors.Text2, modifier = Modifier.size(16.dp))
                 }
-            },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp),
-            textStyle = MaterialTheme.typography.bodyMedium,
-        )
-    }
-}
-
-@Composable
-private fun ClipboardBanner(onClick: () -> Unit, onDismiss: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.primaryContainer,
-        shape = RoundedCornerShape(12.dp),
+            }
+        },
+        singleLine = true,
+        shape = RoundedCornerShape(50),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = XColors.Surface,
+            unfocusedContainerColor = XColors.Surface,
+            focusedBorderColor = if (isLink) XColors.Blue else XColors.Border,
+            unfocusedBorderColor = if (isLink) XColors.Blue.copy(alpha = 0.7f) else XColors.Border,
+            cursorColor = XColors.Blue,
+            focusedTextColor = XColors.Text,
+            unfocusedTextColor = XColors.Text,
+        ),
+        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = XColors.Text),
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clickable(onClick = onClick),
+            .height(52.dp),
+    )
+}
+
+// ------------------------------------------------------------
+// H-08：空状态（无记录=三步引导；搜索无结果=清除入口）
+// ------------------------------------------------------------
+
+@Composable
+private fun EmptyGuide() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        IconCircle(Icons.Filled.VideoLibrary)
+        Spacer(Modifier.height(14.dp))
+        Text("还没有下载记录", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "在 X 里看到喜欢的视频，三步就能存到本地",
+            fontSize = 13.sp,
+            color = XColors.Text2,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        Spacer(Modifier.height(22.dp))
+        GuideStep(1, "打开 X 中的视频推文", "点推文右上角「分享」")
+        Spacer(Modifier.height(10.dp))
+        GuideStep(2, "在分享菜单选择「X 下载助手」", "自动识别链接并解析清晰度")
+        Spacer(Modifier.height(10.dp))
+        GuideStep(3, "选择清晰度开始下载", "支持断点续传，完成后自动保存到相册")
+    }
+}
+
+@Composable
+private fun GuideStep(n: Int, title: String, sub: String) {
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = XColors.Surface,
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.Share, null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "检测到剪贴板中的 X 链接，点此解析",
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = onDismiss) {
-                Icon(Icons.Filled.Cancel, "忽略", tint = MaterialTheme.colorScheme.onPrimaryContainer)
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(XColors.BlueDim),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    n.toString(),
+                    color = XColors.Blue,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text(title, fontSize = 13.sp, lineHeight = 18.sp)
+                Text(sub, fontSize = 12.sp, color = XColors.Text2, lineHeight = 16.sp)
             }
         }
     }
 }
 
 @Composable
-private fun EmptyState(hasSearch: Boolean = false) {
+private fun LinkInputHint() {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -339,146 +586,242 @@ private fun EmptyState(hasSearch: Boolean = false) {
         verticalArrangement = Arrangement.Center,
     ) {
         Icon(
-            Icons.Filled.Download,
+            Icons.Filled.Link,
             null,
-            modifier = Modifier.size(56.dp),
-            tint = MaterialTheme.colorScheme.outline,
+            tint = XColors.Blue,
+            modifier = Modifier.size(40.dp),
         )
         Spacer(Modifier.height(16.dp))
-        if (hasSearch) {
-            // B33：搜索无结果 ≠ 没有记录
-            Text("没有匹配的记录", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "换个关键词试试",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.outline,
-            )
-        } else {
-            Text(
-                "还没有下载记录",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "去 X 里对视频点「分享」→ 选择本应用即可下载",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.outline,
-            )
-        }
+        Text("检测到 X 链接", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "点上方「解析」或按回车开始下载",
+            fontSize = 13.sp,
+            color = XColors.Text2,
+        )
     }
 }
+
+@Composable
+private fun EmptySearchResult(keyword: String, onClear: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            Icons.Filled.Search,
+            null,
+            tint = XColors.Text2,
+            modifier = Modifier.size(44.dp),
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "没有匹配「${keyword.take(12)}」的记录",
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "试试其他关键词，或直接粘贴 X 链接解析",
+            fontSize = 13.sp,
+            color = XColors.Text2,
+        )
+        Spacer(Modifier.height(16.dp))
+        MiniPill("清除搜索", onClick = onClear)
+    }
+}
+
+// ------------------------------------------------------------
+// H-04：记录卡片（16:9 缩略图 + 时长徽章 + 内联状态操作）
+// ------------------------------------------------------------
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecordCard(
     record: DownloadRecord,
+    speed: DownloadSpeed.Info?,
     onClick: () -> Unit,
-    onContinueRequest: (DownloadRecord) -> Unit = { },
+    onContinueRequest: (DownloadRecord) -> Unit,
+    onDelete: () -> Unit,
     viewModel: HomeViewModel,
+    onPlay: () -> Unit,
+    onOpenResolve: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        tonalElevation = 1.dp,
+        shape = RoundedCornerShape(16.dp),
+        color = XColors.Surface,
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = { menuExpanded = true },
-            ),
+            .combinedClickable(onClick = onClick, onLongClick = { menuExpanded = true }),
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
         ) {
-            Poster(record)
+            Thumbnail(record)
             Spacer(Modifier.width(12.dp))
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .height(IntrinsicSize.Min),
             ) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Text(
+                        recordTitle(record),
+                        fontSize = 14.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        lineHeight = 19.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box {
+                        IconButton(
+                            onClick = { menuExpanded = true },
+                            modifier = Modifier.size(26.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.MoreVert,
+                                "更多",
+                                tint = XColors.Text2,
+                                modifier = Modifier.size(17.dp),
+                            )
+                        }
+                        MoreMenu(
+                            record = record,
+                            viewModel = viewModel,
+                            onContinueRequest = onContinueRequest,
+                            onDelete = onDelete,
+                            onPlay = onPlay,
+                            expanded = menuExpanded,
+                            onExpandedChange = { menuExpanded = it },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(3.dp))
                 Text(
-                    recordTitle(record),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(4.dp))
-                // B34：未完成记录显示「添加于」，完成后才显示「下载于」
-                Text(
-                    if (record.status == RecordStatus.DONE)
-                        "下载于 ${dateTimeLabel(record.completedAt ?: record.createdAt)}"
-                    else
-                        "添加于 ${dateTimeLabel(record.createdAt)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    metaLine(record),
+                    fontSize = 12.sp,
+                    color = XColors.Text2,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(6.dp))
-                StatusRow(record, viewModel, onContinueRequest)
+                StatusRow(record, speed, viewModel, onContinueRequest, onOpenResolve)
             }
-            Spacer(Modifier.width(8.dp))
-            MoreMenu(record, viewModel, onContinueRequest, menuExpanded, { menuExpanded = it })
+        }
+    }
+}
+
+/** 作者行 · @handle · 时间（完成记录显示完成时间） */
+private fun metaLine(record: DownloadRecord): String {
+    val ts = if (record.status == RecordStatus.DONE)
+        record.completedAt ?: record.createdAt
+    else record.createdAt
+    return listOfNotNull(
+        record.authorName.takeIf { it.isNotBlank() },
+        "@${record.handle}".takeIf { record.handle.isNotBlank() },
+        timeLabel(ts),
+    ).joinToString(" · ")
+}
+
+@Composable
+private fun Thumbnail(record: DownloadRecord) {
+    Box(
+        modifier = Modifier
+            .size(width = 112.dp, height = 63.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(XColors.Surface2),
+    ) {
+        SubcomposeAsyncImage(
+            model = record.posterUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+            loading = { ThumbnailPlaceholder() },
+            error = { ThumbnailPlaceholder() },
+            success = { SubcomposeAsyncImageContent() },
+        )
+        // 中央播放浮层
+        Box(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(26.dp)
+                .clip(RoundedCornerShape(50))
+                .background(Color(0x8C000000)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.PlayArrow,
+                null,
+                tint = Color.White,
+                modifier = Modifier.size(14.dp),
+            )
+        }
+        // 右下角时长徽章
+        record.durationMs?.takeIf { it > 0 }?.let { ms ->
+            Text(
+                formatDuration(ms),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color(0xBF000000))
+                    .padding(horizontal = 5.dp, vertical = 1.dp),
+            )
         }
     }
 }
 
 @Composable
-private fun Poster(record: DownloadRecord) {
-    val poster = record.posterUrl
-    SubcomposeAsyncImage(
-        model = poster,
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = Modifier
-            .size(64.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        loading = { PosterPlaceholder() },
-        error = { PosterPlaceholder() },
-        success = { SubcomposeAsyncImageContent() },
-    )
-}
-
-@Composable
-private fun PosterPlaceholder() {
+private fun ThumbnailPlaceholder() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Icon(
             Icons.Filled.PlayArrow,
             null,
-            tint = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.size(28.dp),
+            tint = XColors.Text2,
+            modifier = Modifier.size(24.dp),
         )
     }
 }
 
+// ------------------------------------------------------------
+// H-03：状态行 + 内联操作（暂停/取消/继续/重试一步直达）
+// ------------------------------------------------------------
+
 @Composable
 private fun StatusRow(
     record: DownloadRecord,
+    speed: DownloadSpeed.Info?,
     viewModel: HomeViewModel,
-    onContinueRequest: (DownloadRecord) -> Unit = { },
+    onContinueRequest: (DownloadRecord) -> Unit,
+    onOpenResolve: () -> Unit,
 ) {
     when (record.status) {
         RecordStatus.PARSING -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                )
-                Spacer(Modifier.width(6.dp))
-                Text("解析中…", style = MaterialTheme.typography.bodySmall)
+                MiniSpinner()
+                Spacer(Modifier.width(8.dp))
+                Text("正在解析…", fontSize = 12.5.sp, color = XColors.Text2)
             }
         }
         RecordStatus.READY -> {
-            Text(
-                "已解析 · 点击选择清晰度",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "待选择清晰度",
+                    fontSize = 12.5.sp,
+                    color = XColors.Blue,
+                    modifier = Modifier.weight(1f),
+                )
+                MiniPill("继续", onClick = onOpenResolve)
+            }
         }
         RecordStatus.DOWNLOADING -> {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -486,163 +829,189 @@ private fun StatusRow(
                     progress = { record.progress / 100f },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = XColors.Blue,
+                    trackColor = XColors.Border,
+                    strokeCap = StrokeCap.Round,
                 )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "下载中 ${record.progress}%",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
-                )
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        downloadingLabel(record, speed),
+                        fontSize = 12.sp,
+                        color = XColors.Text2,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(
+                        onClick = { viewModel.pause(record) },
+                        modifier = Modifier.size(28.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Pause, "暂停",
+                            tint = XColors.Text2, modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    IconButton(onClick = { viewModel.cancel(record) }, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Filled.Close, "取消",
+                            tint = XColors.Text2, modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
             }
         }
         RecordStatus.PAUSED -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "已暂停 · ${record.progress}%",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.tertiary,
+                    fontSize = 12.5.sp,
+                    color = XColors.Yellow,
+                    modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = { onContinueRequest(record) }) {
-                    Text("继续")
-                }
+                MiniPill("继续") { onContinueRequest(record) }
             }
         }
         RecordStatus.FAILED -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.ErrorOutline,
+                    null,
+                    tint = XColors.Red,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(6.dp))
                 Text(
                     record.errorMsg ?: "下载失败",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 12.5.sp,
+                    color = XColors.Red,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
+                // R-03 语义拆分：已有下载地址 → 重试下载；否则 → 重新解析
+                MiniPill(
+                    if (record.chosenUrl.isNullOrBlank()) "重新解析" else "重试",
+                ) {
+                    if (record.chosenUrl.isNullOrBlank()) viewModel.retryResolve(record)
+                    else viewModel.startOrResume(record)
+                }
             }
         }
         RecordStatus.DONE -> {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                QChip(record.chosenLabel ?: "视频")
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    formatSize(record.fileSize ?: 0),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.outline,
+                    "${formatBytes(record.fileSize ?: 0)} · 已保存",
+                    fontSize = 12.sp,
+                    color = XColors.Text2,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Icon(
+                    Icons.Filled.Check,
+                    null,
+                    tint = XColors.Green,
+                    modifier = Modifier.size(15.dp),
                 )
             }
         }
     }
 }
+
+/** 下载中标签：「68% · 2.4MB/s · 剩余 8s」（速度仅 MP4 直链可算，HLS 显示百分比） */
+private fun downloadingLabel(record: DownloadRecord, speed: DownloadSpeed.Info?): String =
+    buildString {
+        append("${record.progress}%")
+        speed?.let {
+            append(" · ${formatSpeed(it.bytesPerSec)}")
+            it.etaSec?.let { eta -> append(" · ${formatEta(eta)}") }
+        }
+    }
+
+// ------------------------------------------------------------
+// H-06：三点菜单（按状态重组，图标语义修正，删除红色置底）
+// ------------------------------------------------------------
 
 @Composable
 private fun MoreMenu(
     record: DownloadRecord,
     viewModel: HomeViewModel,
     onContinueRequest: (DownloadRecord) -> Unit,
+    onDelete: () -> Unit,
+    onPlay: () -> Unit,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
 ) {
-    Box {
-        IconButton(onClick = { onExpandedChange(true) }) {
-            Icon(Icons.Filled.MoreVert, "更多")
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { onExpandedChange(false) }) {
-            when (record.status) {
-                RecordStatus.DOWNLOADING -> {
-                    DropdownMenuItem(
-                        text = { Text("暂停") },
-                        onClick = {
-                            onExpandedChange(false)
-                            viewModel.pause(record)
-                        },
-                        leadingIcon = { Icon(Icons.Filled.Pause, null) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("取消") },
-                        onClick = {
-                            onExpandedChange(false)
-                            viewModel.cancel(record)
-                        },
-                        leadingIcon = { Icon(Icons.Filled.Cancel, null) },
-                    )
-                }
-                RecordStatus.PAUSED -> {
-                    DropdownMenuItem(
-                        text = { Text("继续下载") },
-                        onClick = {
-                            onExpandedChange(false)
-                            onContinueRequest(record)
-                        },
-                        leadingIcon = { Icon(Icons.Filled.PlayArrow, null) },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("取消") },
-                        onClick = {
-                            onExpandedChange(false)
-                            viewModel.cancel(record)
-                        },
-                        leadingIcon = { Icon(Icons.Filled.Cancel, null) },
-                    )
-                }
-                RecordStatus.FAILED, RecordStatus.READY, RecordStatus.PARSING -> {
-                    DropdownMenuItem(
-                        text = { Text("重试") },
-                        onClick = {
-                            onExpandedChange(false)
-                            viewModel.retryResolve(record)
-                        },
-                        leadingIcon = { Icon(Icons.Filled.Refresh, null) },
-                    )
-                }
-                RecordStatus.DONE -> {
-                    DropdownMenuItem(
-                        text = { Text("分享文件") },
-                        onClick = {
-                            onExpandedChange(false)
-                            viewModel.shareFile(record)
-                        },
-                        leadingIcon = { Icon(Icons.Filled.Share, null) },
-                    )
-                }
+    fun close() = onExpandedChange(false)
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = { onExpandedChange(false) },
+    ) {
+        when (record.status) {
+            RecordStatus.DOWNLOADING -> {
+                MenuAction("暂停", Icons.Filled.Pause) { viewModel.pause(record) }
+                MenuAction("取消下载", Icons.Filled.Close) { viewModel.cancel(record) }
+                MenuAction("复制链接", Icons.Filled.ContentCopy) { viewModel.copyLink(record) }
+                MenuDividerRow()
+                MenuAction("删除", Icons.Filled.Delete, danger = true) { onDelete() }
             }
-            DropdownMenuItem(
-                text = { Text("复制链接") },
-                onClick = {
-                    onExpandedChange(false)
-                    viewModel.copyLink(record)
-                },
-                leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, null) },
-            )
-            DropdownMenuItem(
-                text = { Text("删除") },
-                onClick = {
-                    onExpandedChange(false)
-                    viewModel.deleteRecord(record)
-                },
-                leadingIcon = { Icon(Icons.Filled.Delete, null) },
-            )
+            RecordStatus.PAUSED -> {
+                MenuAction("继续下载", Icons.Filled.PlayArrow) { onContinueRequest(record) }
+                MenuAction("取消下载", Icons.Filled.Close) { viewModel.cancel(record) }
+                MenuAction("复制链接", Icons.Filled.ContentCopy) { viewModel.copyLink(record) }
+                MenuDividerRow()
+                MenuAction("删除", Icons.Filled.Delete, danger = true) { onDelete() }
+            }
+            RecordStatus.FAILED, RecordStatus.READY, RecordStatus.PARSING -> {
+                MenuAction("重新解析", Icons.Filled.Refresh) { viewModel.retryResolve(record) }
+                MenuAction("复制链接", Icons.Filled.ContentCopy) { viewModel.copyLink(record) }
+                MenuDividerRow()
+                MenuAction("删除", Icons.Filled.Delete, danger = true) { onDelete() }
+            }
+            RecordStatus.DONE -> {
+                MenuAction("播放", Icons.Filled.PlayArrow) { onPlay() }
+                MenuAction("分享文件", Icons.Filled.Share) { viewModel.shareFile(record) }
+                MenuAction("复制链接", Icons.Filled.ContentCopy) { viewModel.copyLink(record) }
+                MenuAction("重新下载", Icons.Filled.Download) { viewModel.reprepareDownload(record) }
+                MenuDividerRow()
+                MenuAction("删除", Icons.Filled.Delete, danger = true) { onDelete() }
+            }
         }
     }
 }
 
-private fun formatSize(bytes: Long): String = when {
-    bytes >= 1024 * 1024 * 1024 -> "%.1fGB".format(bytes / 1073741824.0)
-    bytes >= 1024 * 1024 -> "%.1fMB".format(bytes / 1048576.0)
-    bytes >= 1024 -> "%.0fKB".format(bytes / 1024.0)
-    else -> "${bytes}B"
+/** 菜单内分隔线（material3 1.2.1 无 MenuDivider，用 HorizontalDivider 实现） */
+@Composable
+private fun MenuDividerRow() {
+    HorizontalDivider(
+        color = XColors.Border,
+        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+    )
 }
 
-/** 标题：取帖子正文中不含作者名/别名的首个非空行（去除品牌水印与装饰行） */
-private fun recordTitle(record: DownloadRecord): String {
-    val lines = record.text
-        .replace("\r", "")
-        .split("\n")
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-    val content = lines.firstOrNull { line ->
-        (record.authorName.isBlank() || !line.contains(record.authorName)) &&
-            (record.handle.isBlank() || !line.contains(record.handle))
-    } ?: lines.firstOrNull()
-    return (content ?: "X 视频").let { if (it.length > 40) it.take(40) else it }
+@Composable
+private fun MenuAction(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    danger: Boolean = false,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = {
+            Text(
+                label,
+                fontSize = 13.5.sp,
+                color = if (danger) XColors.Red else XColors.Text,
+            )
+        },
+        leadingIcon = {
+            Icon(icon, null, tint = if (danger) XColors.Red else XColors.Text2)
+        },
+        onClick = onClick,
+    )
 }
-
-private fun dateTimeLabel(ts: Long): String =
-    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(ts))

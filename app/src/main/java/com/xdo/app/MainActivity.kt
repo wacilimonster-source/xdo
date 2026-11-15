@@ -13,6 +13,12 @@ import com.xdo.app.ui.AppRoot
 import com.xdo.app.ui.theme.XDoTheme
 import com.xdo.app.util.TweetLink
 
+/** 首页通知权限前置说明（H-10）→ 拉起系统权限弹窗的桥（权限 launcher 只能注册在 Activity） */
+object PermissionBridge {
+    @Volatile
+    var requestNotif: (() -> Unit)? = null
+}
+
 class MainActivity : ComponentActivity() {
 
     private val notifPermission = registerForActivityResult(
@@ -27,13 +33,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        PermissionBridge.requestNotif = { notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS) }
         setContent {
             XDoTheme {
                 AppRoot(onOpenSettings = {})
             }
         }
-        requestNotifPermissionIfNeeded()
         requestLegacyStorageIfNeeded()
+        // H-10：通知权限不再裸弹系统弹窗，改由首页前置说明确认后再拉起（见 HomeScreen / PermissionBridge）
         // B22：仅冷启动处理一次分享 Intent；旋转/配置变化重建时（savedInstanceState != null）
         // 不再重复处理，setIntent 保留的原 SEND intent 不会二次触发解析
         if (savedInstanceState == null) {
@@ -55,17 +62,6 @@ class MainActivity : ComponentActivity() {
         // 严格过滤：仅真正的 X 推文链接（含 status/数字）才触发解析，其他分享静默忽略
         if (TweetLink.extractTweetId(text) != null) {
             AppEvents.emitShare(text)
-        }
-    }
-
-    private fun requestNotifPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= 33) {
-            val granted = ContextCompat.checkSelfPermission(
-                this, android.Manifest.permission.POST_NOTIFICATIONS,
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) {
-                notifPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-            }
         }
     }
 

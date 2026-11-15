@@ -16,6 +16,8 @@ import com.xdo.app.dl.AppHolder
 import com.xdo.app.net.RecordResolver
 import com.xdo.app.util.TweetLink
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -217,6 +219,38 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteRecord(record: DownloadRecord) {
         AppHolder.downloadManager?.deleteRecord(record.id)
+    }
+
+    // ==== H-05：滑动删除 + 撤销 ====
+    // 「先隐藏、延迟 5s 才真正删库删文件」；期间可撤销。VM 销毁时挂起任务随之取消，
+    // 表现等同撤销（记录重新出现），不会出现"删了一半"的状态。
+
+    private val _deletingIds = MutableStateFlow<Set<Long>>(emptySet())
+    val deletingIds: StateFlow<Set<Long>> = _deletingIds
+
+    private val pendingDeleteJobs = HashMap<Long, Job>()
+
+    /** 界面层调用：卡片从列表消失，底部 Snackbar 给出 5s 撤销窗口 */
+    fun deleteRecordWithUndo(record: DownloadRecord) {
+        synchronized(pendingDeleteJobs) { pendingDeleteJobs.remove(record.id)?.cancel() }
+        _deletingIds.value = _deletingIds.value + record.id
+        val job = viewModelScope.launch {
+            delay(DELETE_UNDO_WINDOW_MS)
+            AppHolder.downloadManager?.deleteRecord(record.id)
+            synchronized(pendingDeleteJobs) { pendingDeleteJobs.remove(record.id) }
+            _deletingIds.value = _deletingIds.value - record.id
+        }
+        synchronized(pendingDeleteJobs) { pendingDeleteJobs[record.id] = job }
+    }
+
+    /** Snackbar「撤销」回调：取消延迟删除，卡片立即回到列表 */
+    fun undoDelete(recordId: Long) {
+        synchronized(pendingDeleteJobs) { pendingDeleteJobs.remove(recordId)?.cancel() }
+        _deletingIds.value = _deletingIds.value - recordId
+    }
+
+    private companion object {
+        const val DELETE_UNDO_WINDOW_MS = 5000L
     }
 
     fun clearHistory() {

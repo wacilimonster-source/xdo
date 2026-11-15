@@ -20,9 +20,18 @@ class AppPrefs(context: Context) {
         get() = sp.getLong(KEY_LAST_UPDATE_CHECK, 0L)
         set(v) = sp.edit().putLong(KEY_LAST_UPDATE_CHECK, v).apply()
 
+    /**
+     * 通知权限前置说明是否已问过（H-10：首次启动先弹应用内说明再拉系统弹窗，
+     * 问过一次（无论选开启还是暂不）就不再打扰）
+     */
+    var notifPromptAnswered: Boolean
+        get() = sp.getBoolean(KEY_NOTIF_PROMPT_ANSWERED, false)
+        set(v) = sp.edit().putBoolean(KEY_NOTIF_PROMPT_ANSWERED, v).apply()
+
     private companion object {
         const val KEY_QUALITY_INDEX = "default_quality_index"
         const val KEY_WIFI_ONLY = "wifi_only"
         const val KEY_LAST_UPDATE_CHECK = "last_update_check"
+        const val KEY_NOTIF_PROMPT_ANSWERED = "notif_prompt_answered"
     }
 }

@@ -80,14 +80,31 @@ object UpdateManager {
         _state.value = UpdateState.Idle
     }
 
+    @Volatile
+    private var downloadJob: kotlinx.coroutines.Job? = null
+
+    @Volatile
+    private var downloadCancelled = false
+
+    /** 取消正在进行的更新下载（更新弹窗「取消下载」按钮；之前 reset 只关弹窗，后台协程仍会继续跑） */
+    fun cancelDownload() {
+        downloadCancelled = true
+        downloadJob?.cancel()
+        downloadJob = null
+        _state.value = UpdateState.Idle
+    }
+
     /** 下载并安装更新（进度实时写入全局状态，任何页面都可看到） */
     fun downloadAndInstall(info: UpdateInfo) {
         if (_state.value is UpdateState.Downloading) return
         _lastAvailable.value = info
-        scope.launch {
+        downloadCancelled = false
+        downloadJob = scope.launch {
             _state.value = UpdateState.Downloading(0)
             val apk = withContext(Dispatchers.IO) {
                 downloadApk(info.apkUrl) { bytes, total ->
+                    // 取消后立即停止回写状态（协程取消传播可能有延迟）
+                    if (downloadCancelled) return@downloadApk
                     val pct = if (total > 0) (bytes * 100 / total).toInt().coerceIn(0, 99) else 0
                     _state.value = UpdateState.Downloading(pct, bytes, total)
                 }

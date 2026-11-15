@@ -112,10 +112,16 @@ class ResolveViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 全局设置中的目标清晰度（与 QUALITY_LABELS 顺序一致）→ 实际索引 */
-    private fun pickDefaultIndex(qs: List<QualityOption>): Int {
+    private fun pickDefaultIndex(qs: List<QualityOption>): Int = defaultIndexFor(qs)
+
+    /**
+     * 全局默认清晰度偏好 → 当前列表中的索引。
+     * R-01：解析页给匹配默认偏好的清晰度挂「默认」徽章；saved<=0 表示「智能」，取最高清（已降序）。
+     */
+    fun defaultIndexFor(qs: List<QualityOption>): Int {
         if (qs.isEmpty()) return 0
         val saved = prefs.defaultQualityIndex
-        if (saved <= 0) return 0 // 智能：最高清（已降序）
+        if (saved <= 0) return 0
         val targets = listOf(0, 1440, 1080, 720, 480, 360, 240)
         val target = targets.getOrElse(saved) { 240 }
         var best = 0
