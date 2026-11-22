@@ -1,6 +1,7 @@
 package com.xdo.app.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 object RecordStatus {
@@ -24,7 +25,20 @@ data class QualityOption(
     val audioUrl: String? = null,
 )
 
-@Entity(tableName = "records")
+/**
+ * D-01（DB v2）索引：
+ * - tweetId 唯一：一条推文只有一条记录，并发分享也不会插出重复行；
+ * - status：启动对账按状态查；createdAt：首页按时间倒序。
+ * 改动这里的索引必须同步写迁移（见 Migrations.kt），索引名用 Room 默认名。
+ */
+@Entity(
+    tableName = "records",
+    indices = [
+        Index(value = ["tweetId"], unique = true),
+        Index(value = ["status"]),
+        Index(value = ["createdAt"]),
+    ],
+)
 data class DownloadRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val sourceUrl: String,

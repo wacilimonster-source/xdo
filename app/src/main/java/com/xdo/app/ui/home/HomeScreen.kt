@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -68,7 +69,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,6 +88,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
 import com.xdo.app.PermissionBridge
@@ -134,10 +135,12 @@ fun HomeScreen(
     onOpenPlayer: (Long) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    val records by viewModel.records.collectAsState()
-    val deletingIds by viewModel.deletingIds.collectAsState()
-    val clipboard by viewModel.clipboardLink.collectAsState()
-    val speeds by DownloadSpeed.state.collectAsState()
+    // P-06：collectAsStateWithLifecycle——应用退到后台时停止收集，不再为看不见的界面重组
+    val records by viewModel.records.collectAsStateWithLifecycle()
+    val deletingIds by viewModel.deletingIds.collectAsStateWithLifecycle()
+    val clipboard by viewModel.clipboardLink.collectAsStateWithLifecycle()
+    // P-06：不再在页面顶层收集 DownloadSpeed（150ms 一拍，会让整页每拍重组）；
+    // 改由每张下载中卡片的状态行各自订阅自己那一条，见 DownloadingStatus
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
@@ -217,7 +220,7 @@ fun HomeScreen(
             }
             .filter { r -> filter == "all" || statusGroup(r.status) == filter }
     }
-    val isLink = TweetLink.looksLikeTweetText(search)
+    val isLink = remember(search) { TweetLink.looksLikeTweetText(search) }
 
     Scaffold(
         containerColor = XColors.Bg,
@@ -355,7 +358,6 @@ fun HomeScreen(
                         ) {
                             RecordCard(
                                 record = record,
-                                speed = speeds[record.id],
                                 onClick = { handleCardClick(record) },
                                 onContinueRequest = { rec ->
                                     val needConfirm =
@@ -642,7 +644,6 @@ private fun EmptySearchResult(keyword: String, onClear: () -> Unit) {
 @Composable
 private fun RecordCard(
     record: DownloadRecord,
-    speed: DownloadSpeed.Info?,
     onClick: () -> Unit,
     onContinueRequest: (DownloadRecord) -> Unit,
     onDelete: () -> Unit,
@@ -711,7 +712,7 @@ private fun RecordCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(Modifier.height(6.dp))
-                StatusRow(record, speed, viewModel, onContinueRequest, onOpenResolve)
+                StatusRow(record, viewModel, onContinueRequest, onOpenResolve)
             }
         }
     }
@@ -799,7 +800,6 @@ private fun ThumbnailPlaceholder() {
 @Composable
 private fun StatusRow(
     record: DownloadRecord,
-    speed: DownloadSpeed.Info?,
     viewModel: HomeViewModel,
     onContinueRequest: (DownloadRecord) -> Unit,
     onOpenResolve: () -> Unit,
@@ -823,54 +823,26 @@ private fun StatusRow(
                 MiniPill("继续", onClick = onOpenResolve)
             }
         }
-        RecordStatus.DOWNLOADING -> {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                LinearProgressIndicator(
-                    progress = { record.progress / 100f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp)),
-                    color = XColors.Blue,
-                    trackColor = XColors.Border,
-                    strokeCap = StrokeCap.Round,
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+        RecordStatus.DOWNLOADING -> DownloadingStatus(record, viewModel)
+        RecordStatus.PAUSED -> {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        downloadingLabel(record, speed),
-                        fontSize = 12.sp,
-                        color = XColors.Text2,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
+                        "已暂停 · ${record.progress}%",
+                        fontSize = 12.5.sp,
+                        color = XColors.Yellow,
                     )
-                    IconButton(
-                        onClick = { viewModel.pause(record) },
-                        modifier = Modifier.size(28.dp),
-                    ) {
-                        Icon(
-                            Icons.Filled.Pause, "暂停",
-                            tint = XColors.Text2, modifier = Modifier.size(16.dp),
-                        )
-                    }
-                    IconButton(onClick = { viewModel.cancel(record) }, modifier = Modifier.size(28.dp)) {
-                        Icon(
-                            Icons.Filled.Close, "取消",
-                            tint = XColors.Text2, modifier = Modifier.size(16.dp),
+                    // T-01：系统自动暂停（后台时长上限等）时说明原因；用户手动暂停时 errorMsg 为空
+                    record.errorMsg?.takeIf { it.isNotBlank() }?.let { reason ->
+                        Text(
+                            reason,
+                            fontSize = 11.5.sp,
+                            color = XColors.Text2,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 }
-            }
-        }
-        RecordStatus.PAUSED -> {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "已暂停 · ${record.progress}%",
-                    fontSize = 12.5.sp,
-                    color = XColors.Yellow,
-                    modifier = Modifier.weight(1f),
-                )
                 MiniPill("继续") { onContinueRequest(record) }
             }
         }
@@ -901,22 +873,77 @@ private fun StatusRow(
             }
         }
         RecordStatus.DONE -> {
+            // P-05：DONE 且带 errorMsg = HLS 音轨没能合成进去（只保存了画面），给出明确提示
+            val audioMissing = !record.errorMsg.isNullOrBlank()
             Row(verticalAlignment = Alignment.CenterVertically) {
                 QChip(record.chosenLabel ?: "视频")
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "${formatBytes(record.fileSize ?: 0)} · 已保存",
+                    if (audioMissing) {
+                        "${formatBytes(record.fileSize ?: 0)} · 已保存 · 无声音"
+                    } else {
+                        "${formatBytes(record.fileSize ?: 0)} · 已保存"
+                    },
                     fontSize = 12.sp,
-                    color = XColors.Text2,
+                    color = if (audioMissing) XColors.Yellow else XColors.Text2,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Icon(
-                    Icons.Filled.Check,
+                    if (audioMissing) Icons.AutoMirrored.Filled.VolumeOff else Icons.Filled.Check,
                     null,
-                    tint = XColors.Green,
+                    tint = if (audioMissing) XColors.Yellow else XColors.Green,
                     modifier = Modifier.size(15.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * P-06：下载中状态行——只有这里订阅本任务的实时进度/网速。
+ * 150ms 一拍的更新只重组这一行（进度条 + 文字），卡片其余部分、其他卡片和整个首页都不动。
+ */
+@Composable
+private fun DownloadingStatus(record: DownloadRecord, viewModel: HomeViewModel) {
+    val infoFlow = remember(record.id) { DownloadSpeed.infoFlow(record.id) }
+    val speed by infoFlow.collectAsStateWithLifecycle(initialValue = DownloadSpeed.infoOf(record.id))
+    Column(modifier = Modifier.fillMaxWidth()) {
+        LinearProgressIndicator(
+            // P-01：优先用内存实时进度（DB 只 ~1s 落库一次）
+            progress = { (speed?.progress ?: record.progress) / 100f },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .clip(RoundedCornerShape(2.dp)),
+            color = XColors.Blue,
+            trackColor = XColors.Border,
+            strokeCap = StrokeCap.Round,
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                downloadingLabel(record, speed),
+                fontSize = 12.sp,
+                color = XColors.Text2,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(
+                onClick = { viewModel.pause(record) },
+                modifier = Modifier.size(28.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Pause, "暂停",
+                    tint = XColors.Text2, modifier = Modifier.size(16.dp),
+                )
+            }
+            IconButton(onClick = { viewModel.cancel(record) }, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    Icons.Filled.Close, "取消",
+                    tint = XColors.Text2, modifier = Modifier.size(16.dp),
                 )
             }
         }
@@ -926,8 +953,9 @@ private fun StatusRow(
 /** 下载中标签：「68% · 2.4MB/s · 剩余 8s」（速度仅 MP4 直链可算，HLS 显示百分比） */
 private fun downloadingLabel(record: DownloadRecord, speed: DownloadSpeed.Info?): String =
     buildString {
-        append("${record.progress}%")
-        speed?.let {
+        append("${speed?.progress ?: record.progress}%")
+        // Info 里现在可能只有进度没有速度（如 HLS），速度为 0 时不显示「0B/s」
+        speed?.takeIf { it.bytesPerSec > 0 }?.let {
             append(" · ${formatSpeed(it.bytesPerSec)}")
             it.etaSec?.let { eta -> append(" · ${formatEta(eta)}") }
         }

@@ -2,6 +2,7 @@ package com.xdo.app.update
 
 import android.app.Application
 import com.xdo.app.BuildConfig
+import com.xdo.app.net.Net
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -43,7 +44,8 @@ object UpdateChecker {
     private const val VERSION_URL =
         "https://raw.githubusercontent.com/wacilimonster-source/xdo/main/version.txt"
 
-    private val client = OkHttpClient.Builder()
+    // N-01：从全局基座派生；未设 UA 的请求由基座补 XDo 应用 UA
+    private val client: OkHttpClient = Net.builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .build()

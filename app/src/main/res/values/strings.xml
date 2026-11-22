@@ -9,4 +9,7 @@
     <string name="notif_failed">下载失败「%1$s」</string>
     <string name="notif_action_cancel">取消</string>
     <string name="notif_action_cancel_all">取消全部</string>
+    <!-- T-01：Android 15+ 后台下载时长达到系统上限 -->
+    <string name="notif_timeout_paused_title">已暂停 %1$d 个下载</string>
+    <string name="notif_timeout_paused_text">系统限制了后台下载时长，打开应用后点「继续」即可接着下</string>
 </resources>

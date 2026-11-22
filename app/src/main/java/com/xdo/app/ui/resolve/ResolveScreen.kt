@@ -39,7 +39,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -75,11 +75,11 @@ fun ResolveScreen(
     onBack: () -> Unit,
     onDone: () -> Unit,
 ) {
-    val record by viewModel.record.collectAsState()
-    val qualities by viewModel.qualities.collectAsState()
-    val selectedIndex by viewModel.selectedIndex.collectAsState()
-    val downloading by viewModel.downloading.collectAsState()
-    val message by viewModel.message.collectAsState()
+    val record by viewModel.record.collectAsStateWithLifecycle()
+    val qualities by viewModel.qualities.collectAsStateWithLifecycle()
+    val selectedIndex by viewModel.selectedIndex.collectAsStateWithLifecycle()
+    val downloading by viewModel.downloading.collectAsStateWithLifecycle()
+    val message by viewModel.message.collectAsStateWithLifecycle()
 
     var confirmMetered by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }

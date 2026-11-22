@@ -19,6 +19,9 @@ object Notify {
     /** 完成/失败通知的独立 ID（B09：与前台通知分离，不会被 stopForeground 清掉） */
     const val NOTIFICATION_ID_DONE = 1002
 
+    /** T-01：后台时长超限自动暂停的提示通知（独立 ID，不覆盖完成/失败通知） */
+    const val NOTIFICATION_ID_TIMEOUT = 1003
+
     fun ensureChannel(context: Context) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
@@ -70,6 +73,18 @@ object Notify {
         return NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_error)
             .setContentTitle(context.getString(R.string.notif_failed, title))
+            .setContentIntent(appIntent(context))
+            .setAutoCancel(true)
+            .build()
+    }
+
+    /** T-01：系统后台时长上限到达、下载已自动暂停；点通知回到应用（同时重置系统额度） */
+    fun buildTimeoutPaused(context: Context, count: Int): Notification {
+        ensureChannel(context)
+        return NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setContentTitle(context.getString(R.string.notif_timeout_paused_title, count))
+            .setContentText(context.getString(R.string.notif_timeout_paused_text))
             .setContentIntent(appIntent(context))
             .setAutoCancel(true)
             .build()

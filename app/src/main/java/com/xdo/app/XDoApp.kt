@@ -1,11 +1,14 @@
 package com.xdo.app
 
 import android.app.Application
+import coil.ImageLoader
+import coil.ImageLoaderFactory
 import com.xdo.app.data.AppDatabase
 import com.xdo.app.data.AppPrefs
 import com.xdo.app.dl.AppHolder
 import com.xdo.app.dl.AppPrefsHolder
 import com.xdo.app.dl.DownloadManager
+import com.xdo.app.net.Net
 import com.xdo.app.update.UpdateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +35,7 @@ object AppEvents {
     }
 }
 
-class XDoApp : Application() {
+class XDoApp : Application(), ImageLoaderFactory {
 
     lateinit var db: AppDatabase
         private set
@@ -55,4 +58,14 @@ class XDoApp : Application() {
         // B06：启动对账——把进程被杀遗留的 PARSING/DOWNLOADING 恢复为可操作状态
         downloadManager.recoverInterrupted()
     }
+
+    /**
+     * N-01：Coil（首页/解析页封面图）默认会自建一个 OkHttpClient；
+     * 这里改为从共享基座派生，封面图和解析、下载共用连接池与调度线程。
+     * 磁盘/内存缓存仍由 Coil 自己管理（不依赖 OkHttp Cache），行为不变。
+     */
+    override fun newImageLoader(): ImageLoader =
+        ImageLoader.Builder(this)
+            .okHttpClient { Net.builder().build() }
+            .build()
 }

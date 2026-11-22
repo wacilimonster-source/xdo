@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.xdo.app.R
@@ -24,6 +25,9 @@ class DownloadService : Service() {
 
     private var foregroundStarted = false
     private var lastRecordId = -1L
+
+    /** T-01：系统已因超时收回前台身份，此后绝不能再 startForeground（会抛异常） */
+    private var timedOut = false
 
     override fun onCreate() {
         super.onCreate()
@@ -56,6 +60,29 @@ class DownloadService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * T-01：Android 15+（targetSdk ≥ 35）dataSync 前台服务在 24 小时内后台累计运行满 6 小时，
+     * 系统回调这里，服务此时已不再是前台服务，必须在几秒内 stopSelf，否则系统抛
+     * RemoteServiceException 让应用崩溃。
+     *
+     * 处理：暂停全部任务（已下数据保留，可续传）→ 移除进度通知 → 立刻停服务 →
+     * 发一条可清除的提示通知。用户把应用切到前台会重置额度，回来点「继续」即可。
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "前台服务超时（type=$fgsType），暂停全部下载")
+        timedOut = true
+        val paused = runCatching { AppHolder.downloadManager?.pauseAllForTimeout() ?: 0 }
+            .getOrDefault(0)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        if (paused > 0) {
+            runCatching {
+                val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.notify(Notify.NOTIFICATION_ID_TIMEOUT, Notify.buildTimeoutPaused(this, paused))
+            }
+        }
+    }
+
     override fun onDestroy() {
         instance = null
         super.onDestroy()
@@ -86,6 +113,11 @@ class DownloadService : Service() {
 
     /** 按当前活跃任务快照重建前台通知（B08：取消按钮绑定真实 recordId） */
     private fun refresh() {
+        // T-01：超时后服务正在退出，不再刷新/重新进入前台
+        if (timedOut) {
+            stopSelf()
+            return
+        }
         val dm = AppHolder.downloadManager
         val items = dm?.progressSnapshot().orEmpty()
         // R1：没有任何活跃任务时，进度表里可能还残留已取消任务的条目。
@@ -148,6 +180,7 @@ class DownloadService : Service() {
     // ==== 伴生：DownloadManager 调用 ====
 
     companion object {
+        private const val TAG = "DownloadService"
         const val ACTION_START = "com.xdo.app.action.START"
         const val ACTION_CANCEL = "com.xdo.app.action.CANCEL"
         const val ACTION_CANCEL_ALL = "com.xdo.app.action.CANCEL_ALL"
@@ -157,13 +190,25 @@ class DownloadService : Service() {
         @Volatile
         private var instance: DownloadService? = null
 
-        /** 启动前台服务（幂等）。必须在应用处于前台时调用 */
-        fun start(context: Context, recordId: Long, title: String) {
+        /**
+         * 启动前台服务（幂等）。必须在应用处于前台时调用。
+         * T-01：返回 false 表示系统拒绝启动——Android 12+ 后台不能启动前台服务；
+         * Android 15+ 当天 dataSync 6 小时额度已用完时也会拒绝
+         * （ForegroundServiceStartNotAllowedException，继承自 IllegalStateException）。
+         * 调用方据此暂停任务，而不是让异常把应用带崩。
+         */
+        fun start(context: Context, recordId: Long, title: String): Boolean {
             val intent = Intent(context, DownloadService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_RECORD_ID, recordId)
             }
-            ContextCompat.startForegroundService(context, intent)
+            return try {
+                ContextCompat.startForegroundService(context, intent)
+                true
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "前台服务启动被拒绝: ${e.message}")
+                false
+            }
         }
 
         /** 触发服务按最新进度快照刷新通知 */

@@ -43,7 +43,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,11 +76,11 @@ private val QUALITY_LABELS = listOf(
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
     val vm: SettingsViewModel = viewModel()
-    val defaultQualityIndex by vm.defaultQualityIndex.collectAsState()
-    val wifiOnly by vm.wifiOnly.collectAsState()
-    val recordCount by vm.recordCount.collectAsState()
-    val snack by vm.snack.collectAsState()
-    val updateState by UpdateManager.state.collectAsState()
+    val defaultQualityIndex by vm.defaultQualityIndex.collectAsStateWithLifecycle()
+    val wifiOnly by vm.wifiOnly.collectAsStateWithLifecycle()
+    val recordCount by vm.recordCount.collectAsStateWithLifecycle()
+    val snack by vm.snack.collectAsStateWithLifecycle()
+    val updateState by UpdateManager.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var showQualityPicker by remember { mutableStateOf(false) }

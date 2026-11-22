@@ -2,7 +2,7 @@ package com.xdo.app.dl
 
 import android.content.Context
 import android.net.Uri
-import com.xdo.app.BuildConfig
+import android.os.SystemClock
 import com.xdo.app.data.DownloadRecord
 import com.xdo.app.data.QualityMatch
 import com.xdo.app.data.RecordDao
@@ -24,6 +24,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import com.xdo.app.net.Net
 import java.io.File
 import java.io.RandomAccessFile
 import java.security.MessageDigest
@@ -48,12 +49,17 @@ class DownloadManager(
     /** 活跃任务的进度快照（recordId -> 标题, 百分比），供前台服务聚合渲染（B28） */
     private val progressMap = LinkedHashMap<Long, Pair<String, Int>>()
 
-    private val client = OkHttpClient.Builder()
+    /** P-02：上次刷新前台通知的时间（受 progressMap 锁保护），用于全局限流 */
+    private var lastNotifRefreshAt = 0L
+
+    // N-01：从全局基座派生，共享连接池/调度器（每主机 8 路的上限也在基座里）
+    private val client: OkHttpClient = Net.builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
-    private val UA = "XDo/${BuildConfig.VERSION_NAME}"
+    // N-01：MP4 直链与 HLS 分片都在 video.twimg.com，统一用浏览器 UA（原来是 XDo/x.y）
+    private val UA = Net.BROWSER_UA
 
     fun shutdown() {
         synchronized(jobs) { jobs.values.forEach { it.cancel() }; jobs.clear() }
@@ -76,7 +82,8 @@ class DownloadManager(
      * 残留的 PARSING/DOWNLOADING 一定是中断态：
      * - PARSING → FAILED（提示重试）
      * - DOWNLOADING → PAUSED（保留 part，用户可「继续」）
-     * - 清理无主的 HLS 临时目录
+     * - 清理无主的 HLS 临时目录（P-04：暂停/失败记录的分片目录保留，供 HLS 续传；
+     *   只删记录已不存在或已完成的）
      */
     fun recoverInterrupted() {
         scope.launch {
@@ -94,7 +101,21 @@ class DownloadManager(
                     )
                 }
                 File(context.cacheDir, "xdo").listFiles()?.forEach { f ->
-                    if (f.isDirectory && f.name.startsWith("hls_")) f.deleteRecursively()
+                    when {
+                        f.isDirectory && f.name.startsWith("hls_") -> {
+                            val owner = f.name.removePrefix("hls_").toLongOrNull()?.let { dao.getById(it) }
+                            // 刚启动时用户可能已经点了「继续」（DOWNLOADING），所以只按「无主/已完成」判定
+                            if (owner == null || owner.status == RecordStatus.DONE) {
+                                f.deleteRecursively()
+                            }
+                        }
+                        // D-01：MP4 的 part（{id}_{hash}.part / 旧版 {id}.part）记录已不存在时清掉，
+                        // 例如 v2 迁移去重删掉的重复记录留下的残片
+                        f.isFile && f.name.endsWith(".part") -> {
+                            val id = f.name.substringBefore('_').substringBefore('.').toLongOrNull()
+                            if (id != null && dao.getById(id) == null) f.delete()
+                        }
+                    }
                 }
             }
         }
@@ -116,13 +137,23 @@ class DownloadManager(
             }
         }
         scope.launch {
-            dao.getById(recordId)?.let { DownloadService.start(context, it.id, it.titleForNotif()) }
+            val rec = dao.getById(recordId) ?: return@launch
+            // T-01：前台服务启动被系统拒绝（后台启动 / Android 15 的 dataSync 6 小时额度已用完）时，
+            // 原来会抛异常直接崩溃；现在改为暂停并提示用户打开应用后继续（回到前台会重置额度）
+            if (!DownloadService.start(context, rec.id, rec.titleForNotif())) {
+                pauseDownload(recordId, MSG_FGS_NOT_ALLOWED)
+            }
         }
     }
 
     fun cancelDownload(recordId: Long) {
-        synchronized(jobs) { jobs.remove(recordId)?.cancel() }
+        val job = synchronized(jobs) { jobs.remove(recordId) }
+        job?.cancel()
         scope.launch {
+            // P-04：等任务真正停下再清理，避免在途分片在删除之后又写回临时目录
+            awaitStopped(job)
+            // 取消不再续传：HLS 临时目录（含已下分片）一并删除
+            runCatching { hlsDir(recordId).deleteRecursively() }
             val cur = dao.getById(recordId)
             if (cur != null && cur.fileUri != null && cur.completedAt != null) {
                 // B19：这是对「已下载完成」记录的重下载被取消——恢复为已完成，保留旧文件不丢
@@ -142,22 +173,46 @@ class DownloadManager(
         ids.forEach { cancelDownload(it) }
     }
 
-    fun pauseDownload(recordId: Long) {
+    /**
+     * 暂停下载。[reason] 非空时写进记录的 errorMsg，首页「已暂停」卡片会显示原因
+     * （例如系统后台时长限制）；用户点「继续」后 runDownload 会清掉它。
+     */
+    fun pauseDownload(recordId: Long, reason: String? = null) {
+        // P-01：DB 里的进度是节流写入的（可能落后 ~1s），先取内存里的实时进度再取消任务
+        val liveProgress = DownloadSpeed.progressOf(recordId)
         synchronized(jobs) { jobs.remove(recordId)?.cancel() }
         scope.launch {
             val cur = dao.getById(recordId) ?: return@launch
             if (cur.status == RecordStatus.DOWNLOADING) {
-                dao.upsert(cur.copy(status = RecordStatus.PAUSED))
+                dao.upsert(cur.copy(
+                    status = RecordStatus.PAUSED,
+                    progress = liveProgress ?: cur.progress,
+                    errorMsg = reason,
+                ))
             }
             clearProgress(recordId)
             DownloadService.maybeStop(context)
         }
     }
 
+    /**
+     * T-01：Android 15+ 的 dataSync 前台服务后台运行满 6 小时（24 小时内累计）后，系统回调 onTimeout，
+     * 服务必须在几秒内停止。这里同步取消全部任务（暂停语义：MP4 的 part、HLS 的已下分片都保留），
+     * 返回被暂停的任务数。用户打开应用（额度重置）后点「继续」即可接着下。
+     */
+    fun pauseAllForTimeout(): Int {
+        val ids = synchronized(jobs) { jobs.keys.toList() }
+        ids.forEach { pauseDownload(it, MSG_FGS_TIMEOUT) }
+        return ids.size
+    }
+
     /** 删除记录并清理已保存媒体与临时文件 */
     fun deleteRecord(recordId: Long) {
-        synchronized(jobs) { jobs.remove(recordId)?.cancel() }
+        val job = synchronized(jobs) { jobs.remove(recordId) }
+        job?.cancel()
         scope.launch {
+            awaitStopped(job)
+            runCatching { hlsDir(recordId).deleteRecursively() }
             val rec = dao.getById(recordId) ?: return@launch
             if (!rec.fileUri.isNullOrBlank()) {
                 deleteMedia(rec.fileUri!!)
@@ -182,11 +237,28 @@ class DownloadManager(
 
     // ==== 通知进度（B08/B28）====
 
+    /**
+     * 上报进度：
+     * - 实时进度写内存（DownloadSpeed），UI 直接订阅，不经过数据库（P-01）；
+     * - 前台通知全局限流（P-02）：同一百分比不重发；新任务首次上报立即刷新；
+     *   其余变化至少间隔 NOTIF_INTERVAL_MS。系统对单应用通知更新约限 5 次/秒，
+     *   超限的更新会被静默丢弃（最后一次状态也可能丢）。
+     */
     private fun notifyProgress(recordId: Long, title: String, pct: Int) {
         // 任务已被取消/暂停移出 jobs 时不再上报，避免死条目
         if (synchronized(jobs) { !jobs.containsKey(recordId) }) return
-        synchronized(progressMap) { progressMap[recordId] = title to pct }
-        DownloadService.refresh(context)
+        DownloadSpeed.reportProgress(recordId, pct)
+        val shouldRefresh = synchronized(progressMap) {
+            val prev = progressMap.put(recordId, title to pct)
+            val now = SystemClock.elapsedRealtime()
+            when {
+                prev == null -> true                       // 新任务：立即出现在通知里
+                prev.second == pct -> false                // 百分比没变：不重发
+                now - lastNotifRefreshAt >= NOTIF_INTERVAL_MS -> true
+                else -> false
+            }.also { if (it) lastNotifRefreshAt = now }
+        }
+        if (shouldRefresh) DownloadService.refresh(context)
     }
 
     private fun clearProgress(recordId: Long) {
@@ -249,26 +321,22 @@ class DownloadManager(
 
             if (isHls) {
                 // HLS 分片流：分片下载后合成单个带声 MP4
-                val hlsTmp = File(context.cacheDir, "xdo/hls_${effective.id}")
-                hlsTmp.mkdirs()
-                // B14：分片级进度同时写 DB（节流）+ 通知，列表卡片不再长期停在 0%
+                val hlsTmp = hlsDir(effective.id).apply { mkdirs() }
+                // B14：分片级进度 → 内存实时进度 + 通知（限流）
+                // P-01：DB 只做 ~1s 一次的条件 UPDATE（WHERE status=DOWNLOADING），
+                // 去掉原来的 runBlocking 整行 upsert；暂停/取消/完成后的迟到写入自动影响 0 行
                 var lastDbWrite = 0L
-                val hlsFile = withContext(Dispatchers.IO) {
+                val hlsResult = withContext(Dispatchers.IO) {
                     HlsDownloader.download(client, hlsTmp, url, audioUrl) { pct ->
                         notifyProgress(effective.id, title, pct)
-                        val now = System.currentTimeMillis()
-                        if (now - lastDbWrite > 400 &&
-                            synchronized(jobs) { jobs.containsKey(effective.id) }
-                        ) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastDbWrite >= DB_WRITE_INTERVAL_MS) {
                             lastDbWrite = now
-                            // 回调运行在 IO 线程（withContext(IO) 内部），同步写库保证
-                            // 与最终 DONE 写入的顺序（不会被滞后的进度写覆盖）
-                            kotlinx.coroutines.runBlocking {
-                                dao.upsert(effective.copy(status = RecordStatus.DOWNLOADING, progress = pct))
-                            }
+                            dao.updateProgress(effective.id, pct, null, RecordStatus.DOWNLOADING)
                         }
                     }
                 }
+                val hlsFile = hlsResult.file
                 if (!hlsFile.exists() || hlsFile.length() == 0L) {
                     throw java.io.IOException("HLS 合成结果为空")
                 }
@@ -286,14 +354,22 @@ class DownloadManager(
                     progress = 100,
                     fileUri = savedUri,
                     fileSize = hlsFile.length(), // B15：HLS 完成也要写实际大小，列表不再显示 0B
-                    errorMsg = null,
+                    // P-05：音轨没能合成进去时如实标记（DONE + errorMsg），首页卡片显示「无声音」提示；
+                    // 用户可通过「重新下载」或改选 MP4 清晰度补救
+                    errorMsg = if (hlsResult.audioMissing) MSG_AUDIO_MISSING else null,
                     completedAt = System.currentTimeMillis(),
                 ))
                 hlsFile.delete()
                 hlsTmp.deleteRecursively()
+                // 之前若下过 MP4 清晰度，残留的 part 也一并清掉
+                partFiles(effective.id).forEach { it.delete() }
                 deleteReplacedMedia(oldUri, savedUri) // B19：重下载成功后清理旧文件，不留重复
                 clearProgress(effective.id)
-                DownloadService.finishDone(context, effective.id, title)
+                DownloadService.finishDone(
+                    context,
+                    effective.id,
+                    if (hlsResult.audioMissing) "$title（无声音）" else title,
+                )
             } else {
                 withContext(Dispatchers.IO) {
                     // B04：part 与 URL 绑定；换清晰度（URL 变化）后旧 part 自动作废
@@ -324,17 +400,19 @@ class DownloadManager(
                     completedAt = System.currentTimeMillis(),
                 ))
                 deleteReplacedMedia(oldUri, savedUri)
+                // 之前若下过 HLS 清晰度，残留的分片目录也一并清掉
+                runCatching { hlsDir(effective.id).deleteRecursively() }
                 clearProgress(effective.id)
                 DownloadService.finishDone(context, effective.id, title)
             }
         } catch (e: CancellationException) {
-            // B18：取消/暂停时清掉 HLS 临时目录（MP4 的 part 保留供续传）
-            runCatching { File(context.cacheDir, "xdo/hls_${rec.id}").deleteRecursively() }
+            // P-04：暂停时保留 HLS 已下分片（与 MP4 的 part 一样供续传）；
+            // 取消/删除由 cancelDownload/deleteRecord 在任务停下后负责清理
             clearProgress(rec.id)
             throw e
         } catch (e: Exception) {
-            // 清理可能残留的 HLS 临时目录
-            runCatching { File(context.cacheDir, "xdo/hls_${rec.id}").deleteRecursively() }
+            // P-04：失败（如断网重试耗尽）也保留已下分片，用户点「重试」时接着下；
+            // 清单变化会在 HlsDownloader 里自动作废，记录删除/完成时统一清理
             val cur = dao.getById(rec.id) ?: return
             if (cur.status == RecordStatus.PAUSED) return
             setFailed(cur, friendlyError(e))
@@ -419,24 +497,32 @@ class DownloadManager(
             raf.seek(start)
             val buf = ByteArray(CHUNK)
             var lastNotify = 0L
+            // P-01：DB 落库节流（与 UI/速度上报的 150ms 节拍分开）
+            var lastDbWrite = 0L
             // H-03：瞬时速度/剩余时间上报（与进度节流同步，150ms 一拍）
             var lastSpeedTick = 0L
             var lastSpeedBytes = start
             body.byteStream().use { input ->
                 while (true) {
+                    // 暂停/取消及时生效：进度现在 ~1s 才落库一次（落库本身是取消点），
+                    // 这里每读一块主动检查一次，避免取消延迟变长
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     val n = input.read(buf, 0, buf.size)
                     if (n == -1) break
                     raf.write(buf, 0, n)
                     written += n
-                    val now = System.currentTimeMillis()
+                    val now = SystemClock.elapsedRealtime()
                     if (now - lastNotify > 150) {
                         lastNotify = now
                         val pct = if (total > 0) (written * 100 / total).toInt().coerceIn(0, 99) else 0
-                        dao.upsert(rec.copy(
-                            status = RecordStatus.DOWNLOADING,
-                            progress = pct,
-                            fileSize = written.takeIf { total > 0 },
-                        ))
+                        // P-01：原来每 150ms 用旧快照整行 upsert（REPLACE），会触发全表重查 + 首页重组，
+                        // 且记录在下载中被删除时会被「复活」。改为 ~1s 一次、只改两列的条件 UPDATE。
+                        if (now - lastDbWrite >= DB_WRITE_INTERVAL_MS) {
+                            lastDbWrite = now
+                            dao.updateProgress(
+                                rec.id, pct, written.takeIf { total > 0 }, RecordStatus.DOWNLOADING,
+                            )
+                        }
                         notifyProgress(rec.id, title, pct)
                         val dt = now - lastSpeedTick
                         if (lastSpeedTick == 0L) {
@@ -493,6 +579,15 @@ class DownloadManager(
 
     // ==== part 文件管理（B04）====
 
+    /** P-04：HLS 临时目录（分片 + 中间轨 + 合成产物），暂停/失败后保留供续传 */
+    private fun hlsDir(recordId: Long): File = File(context.cacheDir, "xdo/hls_$recordId")
+
+    /** 等被取消的任务退出（最多 3s；MP4 阻塞读最坏要等读超时，不能让清理无限挂起） */
+    private suspend fun awaitStopped(job: Job?) {
+        if (job == null) return
+        kotlinx.coroutines.withTimeoutOrNull(3_000) { job.join() }
+    }
+
     /** part 文件名绑定 URL 哈希：换清晰度（URL 变化）自动落到新文件，绝不续传混合字节 */
     fun partFile(recordId: Long, url: String): File =
         File(context.cacheDir, "xdo/${recordId}_${urlHash(url)}.part")
@@ -520,6 +615,21 @@ class DownloadManager(
     private companion object {
         const val MAX_CONCURRENT = 2
         const val CHUNK = 64 * 1024
+
+        /** P-05：HLS 音轨合成失败、只保存了画面时写在 DONE 记录上的提示 */
+        const val MSG_AUDIO_MISSING = "音轨合成失败，已保存无声音视频；可重新下载或改选 MP4 清晰度"
+
+        /** T-01：后台下载时长达到系统上限后自动暂停的提示 */
+        const val MSG_FGS_TIMEOUT = "系统限制后台下载时长，已自动暂停；打开应用点「继续」即可接着下"
+
+        /** T-01：系统不允许启动前台下载服务时的提示 */
+        const val MSG_FGS_NOT_ALLOWED = "系统不允许在后台开始下载；打开应用后点「继续」"
+
+        /** P-01：下载进度持久化到 Room 的最小间隔（实时进度走内存，不受此限制） */
+        const val DB_WRITE_INTERVAL_MS = 1_000L
+
+        /** P-02：前台通知刷新最小间隔（全局，多任务合计 ≤2 次/秒，远低于系统 ~5 次/秒限流） */
+        const val NOTIF_INTERVAL_MS = 500L
     }
 }
 

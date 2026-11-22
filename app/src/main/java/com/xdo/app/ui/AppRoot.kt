@@ -2,9 +2,9 @@ package com.xdo.app.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -38,38 +38,9 @@ fun AppRoot(onOpenSettings: () -> Unit = {}) {
     LaunchedEffect(Unit) {
         UpdateManager.autoCheck()
     }
-    val updateState by UpdateManager.state.collectAsState()
-    // B07：持有最近一次「发现新版本」的 info，Downloading/DownloadFailed 状态弹窗不消失
-    val lastUpdateInfo by UpdateManager.lastAvailable.collectAsState()
-    val updateInfo = (updateState as? UpdateState.Available)?.info ?: lastUpdateInfo
-    val showUpdateDialog = updateState is UpdateState.Available ||
-        updateState is UpdateState.Downloading ||
-        updateState is UpdateState.DownloadFailed ||
-        updateState is UpdateState.InstallBlocked
-    if (showUpdateDialog && updateInfo != null) {
-        UpdateDialog(
-            info = updateInfo,
-            state = updateState,
-            onDownload = { UpdateManager.downloadAndInstall(updateInfo) },
-            onCancelDownload = { UpdateManager.cancelDownload() },
-            onOpenInstallSettings = { UpdateManager.openInstallPermissionSettings() },
-            onDismiss = { UpdateManager.reset() },
-        )
-    }
-
-    // 安装权限引导闭环：从系统设置回到应用时（ON_RESUME），权限已开启则自动继续安装已下载的 APK
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner, updateState) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME &&
-                updateState is UpdateState.InstallBlocked
-            ) {
-                UpdateManager.continueInstall()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
+    // P-06：更新弹窗单独放进 UpdateHost——APK 下载进度的高频更新只重组弹窗，
+    // 不再让 AppRoot（以及它下面的 NavHost）跟着每拍重组
+    UpdateHost()
 
     // 分享/粘贴链接进来 → 解析并跳解析页
     LaunchedEffect(Unit) {
@@ -90,6 +61,51 @@ fun AppRoot(onOpenSettings: () -> Unit = {}) {
         }
     }
 
+    AppNavHost(navController, homeViewModel)
+}
+
+/** 全局更新弹窗 + 「安装未知应用」权限引导闭环 */
+@Composable
+private fun UpdateHost() {
+    val updateState by UpdateManager.state.collectAsStateWithLifecycle()
+    // B07：持有最近一次「发现新版本」的 info，Downloading/DownloadFailed 状态弹窗不消失
+    val lastUpdateInfo by UpdateManager.lastAvailable.collectAsStateWithLifecycle()
+    val updateInfo = (updateState as? UpdateState.Available)?.info ?: lastUpdateInfo
+    val showUpdateDialog = updateState is UpdateState.Available ||
+        updateState is UpdateState.Downloading ||
+        updateState is UpdateState.DownloadFailed ||
+        updateState is UpdateState.InstallBlocked
+    if (showUpdateDialog && updateInfo != null) {
+        UpdateDialog(
+            info = updateInfo,
+            state = updateState,
+            onDownload = { UpdateManager.downloadAndInstall(updateInfo) },
+            onCancelDownload = { UpdateManager.cancelDownload() },
+            onOpenInstallSettings = { UpdateManager.openInstallPermissionSettings() },
+            onDismiss = { UpdateManager.reset() },
+        )
+    }
+
+    // 安装权限引导闭环：从系统设置回到应用时（ON_RESUME），权限已开启则自动继续安装已下载的 APK
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    // P-06：不再以 updateState 为 key（下载进度每变一次就重新注册观察者）；
+    // continueInstall() 内部自己判断是否处于 InstallBlocked，其余状态直接返回
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                UpdateManager.continueInstall()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+}
+
+@Composable
+private fun AppNavHost(
+    navController: androidx.navigation.NavHostController,
+    homeViewModel: HomeViewModel,
+) {
     NavHost(
         navController = navController,
         startDestination = Routes.HOME,

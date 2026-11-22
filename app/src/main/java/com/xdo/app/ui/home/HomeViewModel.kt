@@ -93,13 +93,15 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val canonicalUrl = "https://x.com/i/status/$tweetId"
-            // B27：查重与插入互斥，两个协程不会同时查到 null
+            // B27：查重与插入互斥，两个协程不会同时查到 null；
+            // D-01：按 tweetId 查（走唯一索引），插入用 IGNORE——即使绕过了这把锁，
+            // 数据库唯一索引也保证不会出现第二条同推文记录
             val (record, existed) = shareMutex.withLock {
-                val existing = dao.findBySourceUrl(canonicalUrl)
+                val existing = dao.findByTweetId(tweetId)
                 if (existing != null) {
                     existing to true
                 } else {
-                    var rec = DownloadRecord(
+                    val rec = DownloadRecord(
                         sourceUrl = canonicalUrl,
                         tweetId = tweetId,
                         authorName = "",
@@ -119,8 +121,15 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                         createdAt = System.currentTimeMillis(),
                         completedAt = null,
                     )
-                    rec = rec.copy(id = dao.upsert(rec))
-                    rec to false
+                    val newId = dao.insertIfAbsent(rec)
+                    if (newId > 0) {
+                        rec.copy(id = newId) to false
+                    } else {
+                        // 唯一索引冲突：别处刚插入了同一推文（理论上锁已排除，这里兜底）
+                        val dup = dao.findByTweetId(tweetId)
+                            ?: return@launch _snack.emit("记录创建失败，请重试")
+                        dup to true
+                    }
                 }
             }
             when {

@@ -31,7 +31,8 @@ object XResolver {
     // retryOnConnectionFailure(false) 避免把坏连接重试复用；timeout 兜底。
     // B16：callTimeout 是「单次调用总时长」硬上限，阻塞 execute() 也会被 OkHttp 自身掐断，
     // 不再依赖协程 withTimeout（它无法中断阻塞调用）。
-    private val client = OkHttpClient.Builder()
+    // N-01：从全局基座派生（共享连接池：解析阶段建好的 twimg TLS 连接，下载时可直接复用）
+    private val client: OkHttpClient = Net.builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .writeTimeout(10, TimeUnit.SECONDS)
@@ -42,15 +43,14 @@ object XResolver {
         .build()
 
     /** HLS 变体播放列表专用短超时客户端 */
-    private val hlsClient = OkHttpClient.Builder()
+    private val hlsClient: OkHttpClient = Net.builder()
         .connectTimeout(4, TimeUnit.SECONDS)
         .readTimeout(4, TimeUnit.SECONDS)
         .callTimeout(4, TimeUnit.SECONDS)
         .retryOnConnectionFailure(false)
         .build()
 
-    private val UA =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+    private const val UA = Net.BROWSER_UA
 
     private const val SYNDICATION_URL =
         "https://cdn.syndication.twimg.com/tweet-result?id=%s&lang=en&token=%d"

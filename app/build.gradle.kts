@@ -52,15 +52,21 @@ if (!hasStableKeystore) {
 
 android {
     namespace = "com.xdo.app"
-    compileSdk = 34
+    // T-01：34 → 36（Android 16）。targetSdk 36 的行为变化：
+    // - Android 15：dataSync 前台服务每 24h 后台最多 6h，超时回调 onTimeout → 见 DownloadService
+    // - Android 15/16：强制全面屏、不可再关闭 → MainActivity 早已 enableEdgeToEdge()，无影响
+    // - Android 16：预测性返回默认开启 → 项目未重写 onBackPressed，返回由 Navigation 处理，无影响
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.xdo.app"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         // 来自仓库根 version.txt（version.txt 的 versionCode 即「判更新」的唯一依据）
         versionCode = xdoVersionCode
         versionName = xdoVersionName
+        // D-01：数据库迁移的仪器测试（app/src/androidTest）
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     signingConfigs {
@@ -97,6 +103,12 @@ android {
     }
     kotlinOptions {
         jvmTarget = "17"
+        // P-06：Compose 强跳过模式（Compose Compiler 1.5.4+ 支持，2.0 起默认开启）。
+        // 捕获 ViewModel 等不稳定对象的 lambda 会被自动记忆，参数没变的卡片不再跟着整页重组。
+        freeCompilerArgs += listOf(
+            "-P",
+            "plugin:androidx.compose.compiler.plugins.kotlin:experimentalStrongSkipping=true",
+        )
     }
     buildFeatures {
         compose = true
@@ -105,9 +117,16 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
     }
-    packagingOptions {
+    // AGP 8 起 packagingOptions 已废弃，改用 packaging（同一配置）
+    packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
+}
+
+// D-01：Room 把每个数据库版本的表结构导出到 app/schemas/<版本>.json。
+// 这些文件要提交到 git：以后的 AutoMigration 和迁移测试都依赖历史版本的 schema。
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 /** 打印实际参与构建的版本/签名信息，CI 日志里可直接核对 */
@@ -124,6 +143,10 @@ tasks.register("printBuildInfo") {
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx) {
+        version { strictly(libs.versions.lifecycle.get()) }
+    }
+    // P-06：collectAsStateWithLifecycle（后台时停止收集）
+    implementation(libs.androidx.lifecycle.runtime.compose) {
         version { strictly(libs.versions.lifecycle.get()) }
     }
     implementation(libs.androidx.lifecycle.viewmodel.compose) {
@@ -156,6 +179,11 @@ dependencies {
 
     // 单元测试（B36：TweetLink / 播放列表解析 / 文件名等纯逻辑覆盖）
     testImplementation("junit:junit:4.13.2")
+
+    // D-01：仪器测试（数据库迁移需要真实 SQLite，跑在设备/模拟器上）
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:runner:1.5.2")
+    androidTestImplementation("androidx.test:core-ktx:1.5.0")
 
     debugImplementation(libs.androidx.ui.tooling)
 }

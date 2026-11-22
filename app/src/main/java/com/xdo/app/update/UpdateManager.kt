@@ -9,6 +9,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.content.FileProvider
 import com.xdo.app.dl.AppPrefsHolder
+import com.xdo.app.net.Net
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,7 +45,8 @@ object UpdateManager {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    private val client = OkHttpClient.Builder()
+    // N-01：从全局基座派生；未设 UA 的请求由基座补 XDo 应用 UA
+    private val client: OkHttpClient = Net.builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
@@ -151,11 +153,16 @@ object UpdateManager {
         downloadCancelled = false
         downloadJob = scope.launch {
             _state.value = UpdateState.Downloading(0)
+            // P-06：原来每读 64KB 就发一次新状态（几 MB 的 APK 就是上百次），弹窗跟着每次重组；
+            // 现在只在百分比变化时更新（最多 100 次）
+            var lastPct = 0
             val apk = withContext(Dispatchers.IO) {
                 downloadApk(info.apkUrl) { bytes, total ->
                     // 取消后立即停止回写状态（协程取消传播可能有延迟）
                     if (downloadCancelled) return@downloadApk
                     val pct = if (total > 0) (bytes * 100 / total).toInt().coerceIn(0, 99) else 0
+                    if (pct == lastPct) return@downloadApk
+                    lastPct = pct
                     _state.value = UpdateState.Downloading(pct, bytes, total)
                 }
             }
