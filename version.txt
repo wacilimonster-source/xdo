@@ -1,6 +1,6 @@
 {
-  "versionCode": 24,
-  "versionName": "0.3.1",
-  "updateMessage": "新增安装权限引导：遇到「安装未知应用」未开启时一键跳转系统设置，开启后自动继续安装，无需重新下载。",
-  "apkUrl": "https://github.com/wacilimonster-source/xdo/releases/download/v0.3.1/xdo_v0.3.1.apk"
+  "versionCode": 25,
+  "versionName": "0.4.0",
+  "updateMessage": "性能与稳定性优化：HLS 下载提速并支持断点续传（暂停/中断后接着下，不再从 0% 重下）；下载更流畅省电；合成失败自动降级并在缺音轨时明确提示；同一推文不再产生重复记录（老记录自动去重）；适配 Android 15/16。",
+  "apkUrl": "https://github.com/wacilimonster-source/xdo.git/releases/download/v0.4.0/xdo_v0.4.0.apk"
 }
